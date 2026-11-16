@@ -118,6 +118,8 @@ await spec('setup-login', async () => {
   await page.waitForFunction(() => location.pathname === '/welcome', { timeout: 10000 })
   await click(btn('下一步')) // basics
   await waitText('谁能打开面板')
+  await waitText('公网直接访问', 20000) // the public access picker, after the network check
+  await page.screenshot({ path: OUT + 'welcome-access.png', fullPage: true })
   await fill('安全入口', '') // keep the e2e panel reachable without an entry path
   await click(btn('下一步')) // access
   await waitText('保护你的账号')
@@ -139,6 +141,8 @@ await spec('setup-login', async () => {
   // a server without the desktop gets one more step: leave it for later
   await page.waitForFunction(() => /开始使用|这台服务器的桌面/.test(document.body.innerText), { timeout: 10000 })
   if (await page.evaluate(() => document.body.innerText.includes('这台服务器的桌面'))) await click(btn('下一步'))
+  await waitText('建第一个网站')
+  await page.screenshot({ path: OUT + 'welcome-next.png' })
   await click(btn('开始使用'))
   await page.waitForFunction(() => location.pathname.endsWith('/overview'), { timeout: 10000 })
   // sign out, sign in with password + code
@@ -152,6 +156,9 @@ await spec('setup-login', async () => {
   await page.waitForFunction(() => location.pathname.endsWith('/overview') || location.pathname === '/welcome', { timeout: 10000 })
   // the specs below confirm every change in its preview; the quick mode has its own spec
   await page.evaluate(() => localStorage.setItem('berth.quick', '0'))
+  // this panel shares the host (agent, systemd, users) with the real one, where native units and
+  // users are named by site id: start our ids far away so they can never meet (the agent takes ids below 5000)
+  sh('ssh', [HOST, `sqlite3 /var/lib/berth-e2e/berth.db "DELETE FROM sqlite_sequence WHERE name='sites'; INSERT INTO sqlite_sequence(name, seq) VALUES('sites', 4000)"`])
 })
 
 // Quick mode: a low-risk change that can be undone runs without the preview, and the note it
@@ -260,6 +267,79 @@ const change = async (kind, params) => {
   return r.body
 }
 
+// Public access: the check, the entry it needs, the Settings picker, turning it off again.
+// The firewall is left alone here: the e2e panel shares the real agent and its rules.
+await spec('public-access', async () => {
+  const put = async (values) => api('/api/v1/settings', { method: 'PUT', headers: { 'X-CSRF-Token': await csrf(), 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) })
+  const chk = (await api('/api/v1/access/check')).body
+  assert(chk && chk.public === false && chk.port === '7092' && typeof chk.firewalld === 'boolean' && chk.client_public === false, 'check: ' + JSON.stringify(chk))
+  const no = await put({ 'access.public': '1' })
+  assert(no.status === 400 && no.body.error.code === 'settings.public_needs_entry', 'public needs an entry: ' + JSON.stringify(no))
+  await page.goto(`${BASE}/local/settings`)
+  await waitText('Tailscale 私有网络')
+  for (const s of ['公网直接访问', 'Cloudflare 隧道', '只在局域网', '现在：只允许下面名单里的地址打开面板']) await waitText(s)
+  await click(text('公网直接访问'))
+  await waitText('先在下面设置安全入口并保存')
+  await page.screenshot({ path: OUT + 'public-access.png', fullPage: true })
+  assert(await page.$eval(btn('开启公网访问'), (e) => e.disabled), 'no entry: the button waits')
+  // with an entry it opens; the settings page then says so and offers closing it
+  const on = await put({ 'access.entry': '/e2e-public1', 'access.public': '1' })
+  assert(on.status === 200 && on.body.status === 'done', 'on: ' + JSON.stringify(on.body))
+  await page.goto(`${BASE}/local/settings`)
+  await waitText('现在：已对公网开放')
+  await waitText('公网访问开启时，这个名单不生效')
+  await click(text('只在局域网'))
+  await click(btn('关闭公网访问'))
+  await waitText('现在：只允许下面名单里的地址打开面板')
+  assert((await api('/api/v1/access/check')).body.public === false, 'closed again')
+  assert((await put({ 'access.entry': '' })).status === 200, 'entry cleared')
+  // the panel's own addresses: checked, signed into the certificate at once, used by join commands
+  assert((await put({ 'panel.lan_host': 'mini.example.com' })).status === 400, 'a public name is not an internal address')
+  assert((await put({ 'panel.public_host': '192.168.1.5' })).status === 400, 'a private IP is not an external address')
+  assert((await put({ 'panel.lan_host': 'e2e-mini.lan', 'panel.public_host': 'panel.example.com' })).status === 200, 'addresses saved')
+  await sleep(1500)
+  const san = sh('ssh', [HOST, 'echo | openssl s_client -connect 127.0.0.1:7092 -servername e2e-mini.lan 2>/dev/null | openssl x509 -noout -ext subjectAltName'])
+  assert(san.includes('e2e-mini.lan'), 'certificate carries the internal name: ' + san)
+  const jc = await post('/api/v1/hosts/join-codes', { name: 'e2e-joinaddr' })
+  const bases = jc.body.commands.map((c) => c.via + ' ' + c.base)
+  assert(bases[0] === 'lan https://e2e-mini.lan:7092' && bases[1] === 'public https://panel.example.com:7092' && jc.body.command.includes('https://e2e-mini.lan:7092/join/'), 'join commands: ' + bases.join(', '))
+  assert((await put({ 'panel.lan_host': '', 'panel.public_host': '' })).status === 200, 'addresses cleared')
+})
+
+// Invitations: a link with a preset, accepted by someone else in a fresh browser.
+await spec('invite', async () => {
+  await page.goto(`${BASE}/local/users`)
+  await click(btn('邀请朋友'))
+  await click(text('虚拟机用户'))
+  await waitText('可以自己创建和管理虚拟机')
+  await waitText('2 台虚拟机')
+  await click(btn('生成邀请'))
+  await waitText('链接只显示这一次')
+  await page.screenshot({ path: OUT + 'invite-card.png' })
+  const url = await page.$eval('[role=dialog] .num.break-all', (e) => e.textContent.trim())
+  assert(/\/invite\/[0-9a-f]{32}$/.test(url), 'link: ' + url)
+  await page.keyboard.press('Escape')
+  const ctx = await browser.createBrowserContext()
+  const g = await ctx.newPage()
+  await g.setViewport({ width: 1280, height: 860 })
+  await g.goto(url.replace(/^https:\/\/[^/]+/, BASE))
+  await until(g, () => document.body.innerText.includes('邀请你加入'), 10000)
+  await g.screenshot({ path: OUT + 'invite-accept.png' })
+  const type = async (label, v) => { const el = await g.waitForSelector(`::-p-aria(${label})`, { visible: true }); await el.type(v) }
+  await type('用户名', 'e2e-friend')
+  await type('显示名称', '朋友')
+  await type('密码', 'friend-pass-123')
+  await type('再输一次密码', 'friend-pass-123')
+  await (await g.waitForSelector('::-p-aria([name="加入"][role="button"])')).click()
+  await until(g, () => !location.pathname.startsWith('/accept-invite'), 10000)
+  const me = await g.evaluate(() => fetch('/api/v1/me').then((r) => r.json()))
+  assert(me.username === 'e2e-friend' && me.role === 'admin' && me.perms.includes('vms.manage') && !me.perms.includes('sites.manage'), 'joined as: ' + JSON.stringify(me))
+  await ctx.close()
+  // used once: the link is spent, and the list says who joined
+  const inv = (await api('/api/v1/invites')).body.items[0]
+  assert(inv.uses === 1 && inv.accepted[0] === 'e2e-friend', 'invite after: ' + JSON.stringify(inv))
+})
+
 await spec('store-install-site', async () => {
   const name = 'e2e-tools'
   // a failed earlier run may have left it installed; the e2e panel's database is wiped each run
@@ -314,13 +394,13 @@ const reach = async (port) => { try { return Number(execFileSync('curl', ['-s', 
 await spec('firewall', async () => {
   // the e2e panel starts with no rules; start the shared agent's firewall from nothing too
   // (the dev server's real panel keeps no firewall rules)
-  sh('ssh', [HOST, 'systemctl stop berth-fw-rollback.timer 2>/dev/null; nft delete table inet berth 2>/dev/null; rm -f /var/lib/berth/firewall/boot.nft /var/lib/berth/firewall/pending*; docker rm -f e2e-fw >/dev/null 2>&1; docker run -d --name e2e-fw -p 41998:80 nginx:alpine >/dev/null'])
+  sh('ssh', [HOST, 'systemctl stop berth-fw-rollback.timer 2>/dev/null; nft delete table inet berth 2>/dev/null; rm -f /var/lib/berth/firewall/boot.nft /var/lib/berth/firewall/pending*; docker rm -f e2e-fw >/dev/null 2>&1; docker run -d --name e2e-fw -p 31998:80 nginx:alpine >/dev/null'])
   await sleep(1500)
-  assert((await reach(41998)) === 200, 'test port not reachable before')
+  assert((await reach(31998)) === 200, 'test port not reachable before')
   const addRule = async () => {
     await page.goto(`${BASE}/local/network`)
     await click(btn('新建规则'))
-    await fill('端口', '41998')
+    await fill('端口', '31998')
     await fill('备注', 'e2e')
     await click(btn('保存规则（60 秒内确认）'))
     await click('[data-testid=confirm]:not([disabled])', 15000)
@@ -330,25 +410,25 @@ await spec('firewall', async () => {
   }
   // 1. unconfirmed change, rolled back with the button: port open again, list empty again
   await addRule()
-  assert((await reach(41998)) === 0, 'deny rule did not block')
+  assert((await reach(31998)) === 0, 'deny rule did not block')
   const pe = await page.evaluate(() => [document.body.style.pointerEvents, document.querySelectorAll('[role=dialog]').length])
   assert(pe[0] !== 'none', 'page left unclickable after the dialogs closed: ' + JSON.stringify(pe))
   await click(btn('立即恢复'))
   await click('[data-testid=confirm]:not([disabled])', 15000)
   await page.waitForFunction(() => !document.body.innerText.includes('防火墙改动等待确认'), { timeout: 15000 })
-  assert((await reach(41998)) === 200, 'rollback did not reopen the port')
+  assert((await reach(31998)) === 200, 'rollback did not reopen the port')
   await page.waitForFunction(async () => (await fetch('/api/v1/hosts/local/firewall').then((r) => r.json())).rules.length === 0, { timeout: 10000, polling: 1000 })
   // 2. confirmed change stays; then delete it and confirm
   await addRule()
   await click(btn('确认保留'))
   await click('[data-testid=confirm]:not([disabled])', 15000)
   await page.waitForFunction(() => !document.body.innerText.includes('防火墙改动等待确认'), { timeout: 15000 })
-  assert((await reach(41998)) === 0, 'confirmed rule not in force')
+  assert((await reach(31998)) === 0, 'confirmed rule not in force')
   const rules = (await api('/api/v1/hosts/local/firewall')).body.rules
   assert(rules.length === 1, 'rules: ' + rules.length)
   await change('firewall.rule.delete', { id: rules[0].id })
   await change('firewall.confirm', {})
-  assert((await reach(41998)) === 200, 'deleting the rule did not reopen the port')
+  assert((await reach(31998)) === 200, 'deleting the rule did not reopen the port')
   sh('ssh', [HOST, 'docker rm -f e2e-fw >/dev/null 2>&1'])
 })
 
@@ -509,6 +589,7 @@ await spec('vms', async () => {
 })
 
 await spec('remote-desktop', async () => {
+  if (!sh('ssh', [HOST, 'incus list -c n -f csv 2>/dev/null; true']).split('\n').includes('t-rdp')) { console.log('    skipped: the t-rdp desktop container is not on this host (sharing is covered by share-desktop)'); return }
   // the dev server keeps an Xfce desktop with xrdp in the t-rdp container; give its test user a fresh password
   const pw = 'e2e-' + Math.random().toString(36).slice(2, 12)
   const ip = sh('ssh', [HOST, `incus exec t-rdp -- sh -c 'echo rdptest:${pw} | chpasswd' && incus list t-rdp -c 4 -f csv | cut -d' ' -f1`]).trim()
@@ -552,7 +633,103 @@ await spec('remote-desktop', async () => {
   assert(del.status === 'done', 'delete')
 })
 
+// Share links: a remote connection (here SSH to this server, through the same guacd path a
+// VM's desktop uses) shared watch-only with a password, opened without an account, withdrawn.
+await spec('share-desktop', async () => {
+  const pw = 'e2e-' + Math.random().toString(36).slice(2, 12)
+  sh('ssh', [HOST, `id e2eshare >/dev/null 2>&1 || useradd -m e2eshare; echo e2eshare:${pw} | chpasswd`])
+  try {
+    const made = await change('rd.connection.set', { name: 'e2e-share-ssh', protocol: 'ssh', host: '127.0.0.1', port: 22, username: 'e2eshare', password: pw })
+    assert(made.status === 'done', 'connection: ' + made.status)
+    const rdID = (await api('/api/v1/remote')).body.items.find((c) => c.name === 'e2e-share-ssh').id
+    // share it: a watch-only link with a password, opened without an account, then withdrawn
+    const sl = await post('/api/v1/shares', { kind: 'rd', target_id: rdID, control: false, hours: 1, password: 'e2e-share' })
+    assert(sl.status === 200 && /\/v\/[0-9a-f]{32}$/.test(sl.body.url), 'share: ' + JSON.stringify(sl.body))
+    const sctx = await browser.createBrowserContext()
+    const gp = await sctx.newPage()
+    await gp.setViewport({ width: 1280, height: 800 })
+    await gp.goto(sl.body.url.replace(/^https:\/\/[^/]+/, BASE))
+    const pwBox = await gp.waitForSelector('::-p-aria(访问密码)', { visible: true, timeout: 10000 })
+    await pwBox.type('e2e-share')
+    await (await gp.waitForSelector('::-p-aria([name="打开"][role="button"])')).click()
+    await until(gp, () => document.body.innerText.includes('已连接') && document.body.innerText.includes('只能看'), 30000)
+      .catch(async (e) => { await gp.screenshot({ path: OUT + 'share-fail.png' }); throw e })
+    await sleep(3000)
+    await gp.screenshot({ path: OUT + 'share-viewer.png' })
+    const gsize = await gp.evaluate(() => { const c = document.querySelector('canvas'); return c ? [c.width, c.height] : [0, 0] })
+    assert(gsize[0] >= 640, 'shared display ' + gsize)
+    const sid = (await api('/api/v1/shares')).body.items.find((x) => x.target_id === rdID).id
+    assert((await api(`/api/v1/shares/${sid}`, { method: 'DELETE', headers: { 'X-CSRF-Token': await csrf() } })).status === 200, 'withdraw')
+    const after = await gp.evaluate((u) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.status), '/api/v1/share/' + sl.body.url.split('/v/')[1] + '/open')
+    assert(after === 404, 'withdrawn link still opens: ' + after)
+    await sctx.close()
+    await change('rd.connection.delete', { id: rdID })
+  } finally {
+    sh('ssh', [HOST, 'pkill -u e2eshare; userdel -r e2eshare 2>/dev/null; true'])
+  }
+})
+
+// Proxy extension: install Xray, a VLESS + REALITY node and a user; a real client (a second
+// xray container) fetches a page through it, and the traffic shows up on the user.
+await spec('proxy', async () => {
+  const clean = () => sh('ssh', [HOST, 'docker rm -f e2e-xclient >/dev/null 2>&1; rm -rf /tmp/e2e-xclient; true'])
+  clean()
+  try {
+    const ins = await change('proxy.install', {})
+    assert(ins.status === 'done', 'install: ' + JSON.stringify(ins.result ?? ins.error ?? ins).slice(0, 600))
+    const node = await change('proxy.node.set', { name: 'e2e-reality', protocol: 'vless', transport: 'raw', security: 'reality', port: 24443, enabled: true })
+    assert(node.status === 'done', 'node: ' + JSON.stringify(node.result))
+    const user = await change('proxy.user.set', { name: 'e2e-user', nodes: [node.result.id], limit_gb: 1, reset_day: 1 })
+    assert(user.status === 'done', 'user')
+    const d = (await api('/api/v1/proxy')).body
+    assert(d.status.running, 'xray not running: ' + JSON.stringify(d.status))
+    const u = d.users.find((x) => x.name === 'e2e-user')
+    const link = u.links[String(node.result.id)]
+    assert(link.startsWith('vless://') && link.includes('security=reality') && link.includes('pbk='), 'link: ' + link)
+    // the subscription works without signing in
+    const sub = await page.evaluate((url) => fetch(url, { credentials: 'omit' }).then(async (r) => [r.status, r.headers.get('subscription-userinfo'), await r.text()]), u.sub_url.replace(/^https:\/\/[^/]+/, ''))
+    assert(sub[0] === 200 && atob(sub[2]).includes(link) && sub[1].includes('total=1073741824'), 'subscription: ' + sub.slice(0, 2))
+    await page.goto(`${BASE}/local/proxy`)
+    await waitText('e2e-reality')
+    await click('::-p-aria([name="用户"][role="tab"])')
+    await waitText('e2e-user')
+    await click(btn('链接'))
+    await waitText('订阅链接（推荐）')
+    await page.screenshot({ path: OUT + 'proxy.png' })
+    await page.keyboard.press('Escape')
+    // a real client from the link's parameters
+    const l = new URL(link)
+    const q = l.searchParams
+    const client = { log: { loglevel: 'warning' }, inbounds: [{ listen: '127.0.0.1', port: 21080, protocol: 'socks', settings: { udp: false } }],
+      outbounds: [{ protocol: 'vless', settings: { vnext: [{ address: '127.0.0.1', port: +l.port, users: [{ id: l.username, encryption: 'none', flow: q.get('flow') }] }] },
+        streamSettings: { network: 'raw', security: 'reality', realitySettings: { serverName: q.get('sni'), fingerprint: q.get('fp'), publicKey: q.get('pbk'), shortId: q.get('sid') } } }] }
+    sh('ssh', [HOST, `mkdir -p /tmp/e2e-xclient && cat > /tmp/e2e-xclient/config.json && docker run -d --name e2e-xclient --network host -v /tmp/e2e-xclient:/etc/xray:ro,z ${'ghcr.io/xtls/xray-core:latest'} run -c /etc/xray/config.json >/dev/null`], { input: JSON.stringify(client), stdio: ['pipe', 'pipe', 'inherit'] })
+    await sleep(2000)
+    const got = sh('ssh', [HOST, 'curl -s -m 20 -x socks5h://127.0.0.1:21080 https://www.cloudflare.com/cdn-cgi/trace | head -3; true'])
+    assert(/ip=/.test(got), 'nothing came through the proxy: ' + got + sh('ssh', [HOST, 'docker logs --tail 20 e2e-xclient 2>&1; true']))
+    // the traffic is counted (the panel reads the counters every minute)
+    await until(page, async () => (await (await fetch('/api/v1/proxy')).json()).users.find((x) => x.name === 'e2e-user').used_down > 0, 80000)
+  } finally {
+    clean()
+    const d = (await api('/api/v1/proxy')).body
+    for (const u of d.users ?? []) await change('proxy.user.delete', { id: u.id })
+    for (const n of d.nodes ?? []) await change('proxy.node.delete', { id: n.id })
+    if (d.installed) await change('proxy.uninstall', {})
+    assert(!sh('ssh', [HOST, 'docker ps -a --format "{{.Names}}"']).includes('berth-proxy'), 'xray container left behind')
+  }
+})
+
 await spec('server-desktop', async () => {
+  if (!sh('ssh', [HOST, 'command -v vncserver Xvnc xfce4-session 2>/dev/null | head -1; true'])) {
+    // the installer still shows what a desktop wants against what this server has
+    await page.goto(`${BASE}/local/remote`)
+    await click(btn('安装桌面'))
+    await waitText('建议配置')
+    await waitText('桌面只在打开时占资源')
+    await page.screenshot({ path: OUT + 'desktop-fit.png' })
+    for (let k = 0; k < 3 && (await page.$$('[role=dialog]')).length > 0; k++) { await page.keyboard.press('Escape'); await sleep(400) }
+    console.log('    skipped: no desktop installed on this host (installing one takes a long while)'); return
+  }
   // Xfce + TigerVNC are on the dev server; start from "off"
   await change('desktop.disable', {})
   await page.goto(`${BASE}/local/remote`)
@@ -608,6 +785,10 @@ await spec('store-lan', async () => {
   await fill('端口 *', '18282')
   await click(text('内网'))
   await waitText('http://192.0.2.10:18282')
+  // what it wants against what this server has, before installing
+  await waitText('建议配置')
+  await waitText('这台服务器')
+  await page.screenshot({ path: OUT + 'store-fit.png' })
   await sleep(800)
   await click(btn('安装'))
   await click('[data-testid=confirm]:not([disabled])', 15000)
@@ -617,6 +798,7 @@ await spec('store-lan', async () => {
   await page.screenshot({ path: OUT + 'store-lan.png' })
   for (let k = 0; k < 3 && (await page.$$('[role=dialog]')).length > 0; k++) { await page.keyboard.press('Escape'); await sleep(400) }
   await page.goto(`${BASE}/local/containers`)
+  await click('::-p-aria([name="容器"][role="tab"])') // the page opens on 应用; exposure is per container
   await waitText('端口对所有地址开放')
   await page.screenshot({ path: OUT + 'containers-exposure.png' })
   const rm = await change('app.remove', { name })
@@ -1303,7 +1485,8 @@ chown -R site-web${id}: /srv/berth/caddy/sites/${D}`)
     if (site?.result?.id) await change('site.delete', { id: site.result.id })
     onHost(`rm -rf /srv/berth/caddy/sites/${D} /srv/berth/caddy/sites/${O}; true`)
   }
-  const gone = onHost(`ls /etc/systemd/system | grep -c '^berth-php-' || true; getent passwd | grep -c '^site-web' || true`)
+  const sid = site?.result?.id
+  const gone = onHost(`ls /etc/systemd/system | grep -c '^berth-php-${sid}[.-]' || true; getent passwd | grep -c '^site-web${sid}:' || true`)
   assert(gone === '0\n0', 'units and user removed with the site: ' + gone)
 })
 
@@ -1317,12 +1500,12 @@ await spec('php-wordpress', async () => {
   for (let i = 0; i < 900 && ['running', 'queued'].includes(c.status); i++) { await sleep(2000); c = (await api(`/api/v1/changes/${php.id}`)).body }
   assert(c.status === 'done', 'php built: ' + c.status + ' ' + JSON.stringify(c.result).slice(0, 300))
   onHost('rm -rf /srv/berth/apps/wpdb') // data from an earlier run would keep its old root password
-  const db = await change('app.install', { app: 'mariadb', name: 'wpdb' })
+  const db = await change('app.install', { app: 'mariadb', name: 'wpdb', values: { DB_PORT: '13307' } }) // 3306 may belong to a native MariaDB
   let site, inst, dz, mig, nwp
   try {
     let dc = db
     for (let i = 0; i < 300 && ['running', 'queued'].includes(dc.status); i++) { await sleep(2000); dc = (await api(`/api/v1/changes/${db.id}`)).body }
-    assert(dc.status === 'done', 'mariadb installed')
+    assert(dc.status === 'done', 'mariadb installed: ' + JSON.stringify(dc.result ?? dc.error).slice(0, 300))
     const cont = (await api('/api/v1/hosts/local/databases')).body.candidates.find((x) => x.container.startsWith('wpdb'))
     for (let i = 0; i < 30; i++) { // the database accepts connections a little after it starts
       inst = await change('db.instance.add', { name: 'wpdb', engine: 'mariadb', container: cont.container })
@@ -1987,7 +2170,7 @@ await spec('ddns', async () => {
   // a "custom update URL" account aimed at a tiny server on the dev box, which logs what it is asked
   sh('ssh', [HOST, 'systemctl stop e2e-ddns 2>/dev/null; systemctl reset-failed e2e-ddns 2>/dev/null; mkdir -p /tmp/e2e-ddns && echo ok > /tmp/e2e-ddns/ok.txt; true'])
   sh('ssh', [HOST, 'systemd-run --unit e2e-ddns -p RuntimeMaxSec=300 /usr/bin/python3 -m http.server 18999 --bind 127.0.0.1 --directory /tmp/e2e-ddns >/dev/null 2>&1; sleep 1; true'])
-  await page.goto(`${BASE}/local/domains`)
+  await page.goto(`${BASE}/local/domains/accounts`) // the accounts tab (My domains is the first one)
   await click(btn('添加 DNS 账号'))
   await page.waitForSelector('::-p-xpath(//*[@role="dialog"]//select/option[@value="customurl"])')
   await page.select('::-p-xpath(//*[@role="dialog"]//select)', 'customurl')
@@ -1998,6 +2181,7 @@ await spec('ddns', async () => {
   await waitText('自定义更新地址')
   await page.waitForFunction(() => document.querySelectorAll('[role=dialog]').length === 0, { timeout: 15000 })
   await sleep(500)
+  await click('::-p-aria([name="DDNS"][role="tab"])') // DDNS has its own tab now
   await click(btn('添加 DDNS'))
   await fill('记录名', 'e2e.example.test')
   await waitText('走网口 end0 出去的地址')
@@ -3254,6 +3438,7 @@ await spec('plugins', async () => {
     await uploadVia(work + 'iperf3.berthplugin')
     await waitText('网速测试（iperf3）', 15000)
     await waitText('开发者签了名')
+    await waitText('建议配置') // what it wants against what this server has
     await page.screenshot({ path: OUT + 'plugin-intro.png' })
     await click('::-p-xpath(//*[@role="dialog"]//button[normalize-space(.)="继续"])')
     await waitText('它在这台服务器上需要什么')

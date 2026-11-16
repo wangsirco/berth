@@ -9,6 +9,7 @@ import { ago } from '@/lib/format'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import type { User } from '@/lib/types'
+import { InvitesBox } from '@/components/invite/Invites'
 
 interface PermDef { key: string; group: string; danger?: boolean; super_only?: boolean }
 type Role = User['role']
@@ -33,6 +34,7 @@ export default function UsersPage() {
           </Row>
         ))}
       </Box>
+      <div className="mt-4"><InvitesBox /></div>
       {edit && <UserDrawer user={edit === 'new' ? null : edit} perms={perms.data?.items ?? []} onClose={() => setEdit(null)} onDone={() => { setEdit(null); void users.reload() }} />}
     </>
   )

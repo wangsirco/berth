@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Button } from '@/components/ui/Button'
@@ -48,7 +49,8 @@ export default function HostsPage() {
 function JoinDialog({ onClose }: { onClose: () => void }) {
   const t = useT()
   const [name, setName] = useState('')
-  const [res, setRes] = useState<{ command: string; expires_at: number } | null>(null)
+  const [res, setRes] = useState<{ command: string; expires_at: number; commands?: { via: string; base: string; command: string }[] } | null>(null)
+  const [via, setVia] = useState(0)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
   const create = async () => {
@@ -65,12 +67,22 @@ function JoinDialog({ onClose }: { onClose: () => void }) {
           <Field label={t('hosts.name')} hint={t('hosts.name_hint')}><Input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="prod" autoFocus /></Field>
         </> : <>
           <p>{t('hosts.run_this', { name })}</p>
-          <pre className="num whitespace-pre-wrap break-all rounded-[var(--radius-box)] border border-line bg-soft px-3 py-2 text-[12px]">{res.command}</pre>
+          {(res.commands?.length ?? 0) > 1 && (
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('hosts.via')}>
+              {res.commands!.map((c, i) => (
+                <button key={c.via} type="button" role="radio" aria-checked={via === i} onClick={() => { setVia(i); setCopied(false) }} className={'rounded-full border px-2.5 py-0.5 text-[12px] ' + (via === i ? 'border-acc bg-tint' : 'border-line hover:border-acc')}>
+                  {t('hosts.via_' + c.via)} <span className="num text-mute">{c.base.replace('https://', '')}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <pre className="num whitespace-pre-wrap break-all rounded-[var(--radius-box)] border border-line bg-soft px-3 py-2 text-[12px]">{res.commands?.[via]?.command ?? res.command}</pre>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => { void navigator.clipboard.writeText(res.command); setCopied(true) }}>{copied ? t('common.copied') : t('common.copy')}</Button>
+            <Button size="sm" onClick={() => { void navigator.clipboard.writeText(res.commands?.[via]?.command ?? res.command); setCopied(true) }}>{copied ? t('common.copied') : t('common.copy')}</Button>
             <span className="text-[12px] text-mute">{t('hosts.expires', { time: new Date(res.expires_at * 1000).toLocaleTimeString() })}</span>
           </div>
           <p className="text-[12px] text-mute">{t('hosts.join_note')}</p>
+          {!res.commands?.some((c) => c.via !== 'current') && <p className="text-[12px] text-mute">{t('hosts.via_hint')} <Link className="text-acc hover:underline" to="/local/settings">{t('nav.settings')}</Link></p>}
         </>}
       </div>
     </Dialog>

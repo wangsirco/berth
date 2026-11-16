@@ -1,3 +1,4 @@
+import { ResourceFit } from '@/components/ResourceFit'
 import { Check } from 'lucide-react'
 import { cx } from '@/components/ui/cx'
 import { useT } from '@/lib/i18n'
@@ -26,6 +27,7 @@ export function SoftwarePicker({ info, pick, onChange }: { info: DesktopInfo; pi
   const isPreset = (p: 'basic' | 'dev') => info.presets[p].length === pick.length && info.presets[p].every((x) => pick.includes(x))
   return (
     <div className="space-y-3 text-[13px]">
+      <ResourceFit cores={2} memMB={2048} runMB={info.status.installed ? undefined : 400} diskMB={Math.round(pickSize(info, pick) * 2.5)} impacts={['fit.desk_install', 'fit.desk_run', 'fit.desk_browser']} />
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {(['basic', 'dev'] as const).map((p) => (
           <button key={p} type="button" onClick={() => preset(p)} className={cx('rounded-[var(--radius-box)] border p-2.5 text-left', isPreset(p) ? 'border-acc bg-tint' : 'border-line hover:border-acc')}>

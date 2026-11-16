@@ -35,19 +35,20 @@ var DefaultAllowCIDRs = []string{
 }
 
 type App struct {
-	cfg        Config
-	db         *sql.DB
-	agents     map[string]*agentproto.Client // guarded by agentsMu: remote hosts come and go
-	agentsMu   sync.RWMutex
-	remotes    map[string]io.Closer // live remote sessions by host name
-	web        fs.FS
-	builtinWeb fs.FS // the UI compiled in, for going back from a downloaded one
-	pipe       *change.Pipeline
-	masterKey  []byte
-	limiter    *loginLimiter
-	queue      *tasks.Queue
-	metrics    *metricStore
-	hub        hub
+	cfg         Config
+	db          *sql.DB
+	agents      map[string]*agentproto.Client // guarded by agentsMu: remote hosts come and go
+	agentsMu    sync.RWMutex
+	remotes     map[string]io.Closer // live remote sessions by host name
+	web         fs.FS
+	builtinWeb  fs.FS  // the UI compiled in, for going back from a downloaded one
+	certRefresh func() // re-issue the panel certificate (set by main)
+	pipe        *change.Pipeline
+	masterKey   []byte
+	limiter     *loginLimiter
+	queue       *tasks.Queue
+	metrics     *metricStore
+	hub         hub
 
 	mu          sync.RWMutex
 	allow       []*net.IPNet
@@ -154,7 +155,7 @@ func (a *App) clientIP(r *http.Request) string {
 }
 
 func (a *App) allowed(r *http.Request) bool {
-	if a.cfg.Public {
+	if a.isPublic() {
 		return true
 	}
 	ip := net.ParseIP(a.clientIP(r))

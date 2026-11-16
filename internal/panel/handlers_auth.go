@@ -15,6 +15,7 @@ type meView struct {
 	Onboarded bool   `json:"onboarded"`
 	HasTOTP   bool   `json:"has_totp"`
 	Passkeys  int    `json:"passkeys"`
+	Needs2FA  bool   `json:"needs_2fa,omitempty"` // public access is on and this account has no second factor
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +69,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	s := currentSession(r)
 	u := currentUser(r)
 	me := meView{User: u, Stage: "full", Onboarded: a.setting(onboardKey(u.ID)) != "", HasTOTP: a.hasTOTP(u.ID), Passkeys: a.usablePasskeyCount(u.ID)}
+	me.Needs2FA = a.isPublic() && len(a.secondStepMethods(u)) == 0
 	if s != nil {
 		me.CSRF = s.csrf
 	}

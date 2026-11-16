@@ -20,9 +20,12 @@ const (
 	reauthTTL     = 10 * time.Minute
 )
 
-// effectiveLoginMode: with public access on, plain password sign-in is not allowed (方案 §7.4).
+// effectiveLoginMode: with public access on, a password alone is not enough once the
+// account has a second factor. An account without one still signs in with its password
+// (refusing would lock the only administrator out); the panel then insists on setting
+// one up (meView.Needs2FA).
 func (a *App) effectiveLoginMode(u *User) string {
-	if u.LoginMode == LoginPassword && a.cfg.Public {
+	if u.LoginMode == LoginPassword && a.isPublic() && len(a.secondStepMethods(u)) > 0 {
 		return LoginPassword2FA
 	}
 	return u.LoginMode

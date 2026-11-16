@@ -86,15 +86,15 @@ curl -fsSL https://raw.githubusercontent.com/wangsirco/berth/main/scripts/instal
 2. 安装需要的依赖：Docker CE（官方源，含 Compose 插件）、nftables、tc、smartmontools、acl、curl、证书；在 16K 内存页的 Apple 芯片机器上，还会装 4K 兼容层（libkrun）；
 3. 下载安装包并校验 SHA-256；
 4. 创建 `berth` 系统用户和目录，安装并启动 `berth-agent`、`berth-panel` 两个服务；
-5. 在防火墙里**只对内网**（局域网、Tailscale）放行面板端口 7090；
+5. 检测公网 IP，并**问你要不要对公网开放面板**：云服务器一般选是（自动设置安全入口、放行防火墙，登录后必须开启二步验证；别忘了在云服务商的安全组里放行 TCP 7090）；家里的机器选否，只对局域网和 Tailscale 放行，以后也可以用 Cloudflare 隧道；
 6. 打印初始化链接：10 分钟内打开它，创建超级管理员。
 
-已经装过时再运行一次，就是就地升级，数据保留。想每一步先确认，在末尾加 `--ask`：`… | sudo sh -s -- --ask`。
+已经装过时再运行一次，就是就地升级，数据保留。想每一步先确认，在末尾加 `--ask`：`… | sudo sh -s -- --ask`；不想被问公网访问，可以直接加 `--public` 或 `--private`。
 
 ### 系统要求
 
-- **架构：ARM64。** 目前所有 ARM 架构的机器都可以正常使用。**x86 版本正在开发中，敬请期待。**
-- **系统：** Fedora / Fedora Asahi Remix、Debian、Ubuntu、Rocky Linux、AlmaLinux，需要 systemd。
+- **架构：ARM64。** 基本兼容所有 ARM 服务器：Apple M 系列 Mac、树莓派、ARM 云服务器（如 AWS Graviton、Oracle Ampere、阿里云倚天等）都可以使用。**x86 版本正在开发中，敬请期待。**
+- **系统：** Fedora / Fedora Asahi Remix、Debian、Ubuntu、Rocky Linux、AlmaLinux，需要 systemd。**目前在 Fedora 上实际测试过**（Fedora Asahi Remix 真机和 Fedora 虚拟机），其他发行版理论上可用，遇到问题欢迎提 Issue。
 - **内存：** 1 GB 以上；要跑应用和虚拟机，建议 4 GB 以上。
 - **说明：** 到目前为止，Berth 主要在 **Apple M 系列芯片 + Fedora Asahi Remix** 上开发和优化，这是我们最推荐、验证最充分的组合。
 
@@ -104,6 +104,7 @@ curl -fsSL https://raw.githubusercontent.com/wangsirco/berth/main/scripts/instal
 
 - 用浏览器打开 `https://服务器IP:7090`。面板使用自己的本地证书，第一次访问浏览器会提示“不安全”，核对安装结束时打印的证书指纹即可。
 - 建议在「设置」里开启**安全入口**，并给管理员开启**二步验证**。
+- 安装时没开公网访问、后来又想从外面打开：在「设置 → 常规 → 访问」里选择接入方式，或者在服务器上运行 `sudo berth admin public on`。
 
 ### 忘记安全入口或密码
 
@@ -120,6 +121,7 @@ sudo berth admin info                 # 面板地址、安全入口、管理员
 sudo berth admin entry /mypanel88     # 修改安全入口（off 关闭）
 sudo berth admin username newname     # 修改管理员用户名
 sudo berth admin password --random    # 生成新的随机密码
+sudo berth admin public on            # 开启公网访问（off 关闭）
 ```
 
 ### 升级与卸载

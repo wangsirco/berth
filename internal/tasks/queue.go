@@ -23,6 +23,11 @@ type MemProbe func(host string) (availableMB int)
 // MemReserveMB stays free for the system and the panel itself.
 const MemReserveMB = 512
 
+// MemWaitMax: how long a task waits for memory to free up. A small machine may never have
+// what a task would like; after this it runs anyway (slower, maybe swapping) and says so in
+// its log, instead of waiting forever.
+var MemWaitMax = 2 * time.Minute
+
 type TaskView struct {
 	ID         string         `json:"id"`
 	ChangeID   string         `json:"change_id"`
@@ -59,6 +64,8 @@ type task struct {
 	cancel   context.CancelFunc
 	canceled bool
 	seq      int
+	memSince time.Time      // when it started waiting for memory
+	lowMem   map[string]any // started without the memory it wanted (need / avail)
 }
 
 type Queue struct {
@@ -160,13 +167,20 @@ func (q *Queue) schedule() {
 				a = q.mem(t.view.Host)
 			}
 			if t.kind.MemMB > a-MemReserveMB {
-				reason, params = "tasks.wait_memory", map[string]any{"need": t.kind.MemMB, "avail": a}
+				if t.memSince.IsZero() {
+					t.memSince = time.Now()
+				}
+				if time.Since(t.memSince) < MemWaitMax {
+					reason, params = "tasks.wait_memory", map[string]any{"need": t.kind.MemMB, "avail": a, "max": int(MemWaitMax.Minutes())}
+				} else {
+					t.lowMem = map[string]any{"need": t.kind.MemMB, "avail": a}
+				}
 			} else {
 				avail[t.view.Host] = a - t.kind.MemMB // reserve for tasks started in this pass
 			}
 		}
 		if reason != "" {
-			if t.view.WaitReason != reason {
+			if t.view.WaitReason != reason || fmt.Sprint(t.view.WaitParams) != fmt.Sprint(params) {
 				t.view.WaitReason, t.view.WaitParams = reason, params
 				changed = append(changed, t)
 			}
@@ -193,6 +207,10 @@ func (q *Queue) schedule() {
 
 func (q *Queue) execute(t *task) {
 	env := change.Env{Ctx: t.ctx, Host: t.view.Host, Log: func(f string, a ...any) { q.logLine(t, fmt.Sprintf(f, a...)) }}
+	if t.lowMem != nil {
+		q.logLine(t, fmt.Sprintf("内存偏紧：这个任务最好有 %v MB 空闲，现在只有 %v MB。不再等待，照常进行，可能会慢一些，期间其他程序也可能变慢。 / Memory is tight (%v MB wanted, %v MB free): going ahead anyway; it may be slower, and so may everything else meanwhile.",
+			t.lowMem["need"], t.lowMem["avail"], t.lowMem["need"], t.lowMem["avail"]))
+	}
 	res, undo, err := t.run(env)
 	q.mu.Lock()
 	switch {
@@ -373,6 +391,12 @@ func (q *Queue) query(tail string, args ...any) ([]*TaskView, error) {
 		}
 		_ = json.Unmarshal([]byte(steps), &v.Steps)
 		v.Kind = strings.TrimPrefix(v.Title, "kind.") // titles are "kind.<name>"; the kind is not stored separately
+		// a live task knows more than its row (the numbers behind a wait reason)
+		q.mu.Lock()
+		if live := q.lookup(v.ID); live != nil {
+			v.WaitParams = live.view.WaitParams
+		}
+		q.mu.Unlock()
 		out = append(out, &v)
 	}
 	return out, rows.Err()

@@ -276,4 +276,15 @@ var migrations = []string{
 		name TEXT NOT NULL, command TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', folder TEXT NOT NULL DEFAULT '', danger INTEGER NOT NULL DEFAULT 0,
 		uses INTEGER NOT NULL DEFAULT 0, last_used INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 	 CREATE INDEX snippets_user ON snippets(user_id)`,
+	// v45: 邀请朋友（带权限预设的邀请链接）和免注册分享链接（远程桌面 / 虚拟机桌面）
+	`CREATE TABLE invites (id INTEGER PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, created_by INTEGER NOT NULL, preset TEXT NOT NULL,
+		role TEXT NOT NULL, perms TEXT NOT NULL DEFAULT '[]', quota TEXT NOT NULL DEFAULT '{}', simple INTEGER NOT NULL DEFAULT 0,
+		note TEXT NOT NULL DEFAULT '', max_uses INTEGER NOT NULL DEFAULT 1, uses INTEGER NOT NULL DEFAULT 0, accepted TEXT NOT NULL DEFAULT '[]',
+		expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+	 CREATE TABLE link_shares (id INTEGER PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, created_by INTEGER NOT NULL, kind TEXT NOT NULL, target_id INTEGER NOT NULL,
+		name TEXT NOT NULL DEFAULT '', control INTEGER NOT NULL DEFAULT 0, password_hash TEXT NOT NULL DEFAULT '', uses INTEGER NOT NULL DEFAULT 0,
+		last_used INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0)`,
+	// v46: Xray 代理扩展——节点和用户（规格存 JSON，和 Wharf 的代理扩展同一套字段）
+	`CREATE TABLE proxy_nodes (id INTEGER PRIMARY KEY, spec TEXT NOT NULL);
+	 CREATE TABLE proxy_users (id INTEGER PRIMARY KEY, spec TEXT NOT NULL)`,
 }

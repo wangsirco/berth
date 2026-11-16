@@ -1,3 +1,4 @@
+import { ResourceFit } from '@/components/ResourceFit'
 import { AlertTriangle, BadgeCheck, Box as BoxIcon, Cpu, ShieldAlert, ShieldQuestion } from 'lucide-react'
 import { useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
@@ -94,6 +95,8 @@ export function InstallWizard({ info, onClose, onDone }: { info: Inspect; onClos
             </div>
           </div>
           <p className="text-[13.5px] leading-relaxed">{tx(m.description, locale)}</p>
+          <ResourceFit cores={m.runtime.cpus && m.runtime.cpus >= 1 ? Math.ceil(m.runtime.cpus) : undefined} memMB={(m.runtime.mem_mb ?? 256) + 1024} runMB={m.runtime.mem_mb ?? 256}
+            diskMB={Math.max(50, Math.round(info.size / 2 ** 20) * (m.runtime.type === 'container' ? 3 : 1))} impacts={[m.runtime.type === 'container' ? 'fit.plugin_container' : 'fit.plugin_native', 'fit.plugin_run']} />
           {info.screenshots && info.screenshots.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1">{info.screenshots.map((s, k) => <img key={k} src={s} alt="" className="h-40 rounded-lg border border-line" />)}</div>}
           <div className={cx('flex items-start gap-2 rounded-xl border px-3 py-2 text-[12.5px]', sig.tone === 'ok' ? 'border-ok/40 text-ok' : sig.tone === 'warn' ? 'border-warn/50 text-warn' : 'border-bad/50 text-bad')}>
             <sig.Icon className="mt-0.5 size-4 shrink-0" /><span>{sig.text}</span>

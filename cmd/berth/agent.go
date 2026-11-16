@@ -15,6 +15,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wangsirco/berth/internal/agent"
@@ -31,6 +32,7 @@ import (
 	"github.com/wangsirco/berth/internal/agent/incus"
 	"github.com/wangsirco/berth/internal/agent/metrics"
 	"github.com/wangsirco/berth/internal/agent/migrate"
+	"github.com/wangsirco/berth/internal/agent/proxy"
 	"github.com/wangsirco/berth/internal/agent/pty"
 	"github.com/wangsirco/berth/internal/agent/system"
 	"github.com/wangsirco/berth/internal/agent/traffic"
@@ -149,6 +151,20 @@ func registerModules(s *agent.Server) {
 	docker.Register(s, dc)
 	smp := metrics.NewSampler()
 	go smp.Run(time.Second, nil)
+	vmc := incus.New()
+	metrics.VMs = func(ctx context.Context) []metrics.Berth {
+		list, err := vmc.Instances(ctx)
+		if err != nil {
+			return nil
+		}
+		var out []metrics.Berth
+		for _, in := range list {
+			if strings.EqualFold(in.Status, "running") && in.MemUsed > 0 {
+				out = append(out, metrics.Berth{Type: "vm", ID: in.Name, Name: in.Name, MemBytes: in.MemUsed, Project: in.Type})
+			}
+		}
+		return out
+	}
 	metrics.Register(s, smp, dc)
 	pty.Register(s, pty.NewManager("/var/lib/berth/recordings"))
 	files.Register(s, files.New("/var/lib/berth/trash"))
@@ -164,6 +180,7 @@ func registerModules(s *agent.Server) {
 		return accesslog.Shared.CountryNets(ctx, code)
 	}
 	firewall.Register(s)
+	proxy.Register(s)
 	traffic.Register(s, dc)
 	incus.Register(s)
 	migrate.Register(s)

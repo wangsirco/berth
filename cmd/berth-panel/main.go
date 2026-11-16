@@ -146,6 +146,11 @@ func run(etc string) error {
 		return err
 	}
 	go ca.Watch(certNames, log.Printf)
+	app.SetCertRefresh(func() {
+		if err := ca.Refresh(certNames()); err != nil {
+			log.Printf("certificate refresh: %v", err)
+		}
+	})
 	app.SetCA(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.CADER()}), ca.CAFingerprint())
 	caCert, caKey := ca.SigningCA()
 	app.SetLocalSigner(certkit.Signer{Cert: caCert, Key: caKey, Allow: ca.Permits})

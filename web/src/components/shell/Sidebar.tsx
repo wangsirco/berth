@@ -1,6 +1,6 @@
 import {
   Activity, ArchiveRestore, AtSign, CalendarClock, Cloud, Rocket, Bell, Boxes, ChevronsUpDown, Code2, Database, Folder, GitBranch, Globe, House, KeyRound, LogOut, Monitor, MonitorSmartphone,
-  Moon, Puzzle, ScrollText, Search, Server, ServerCog, Settings, ShieldCheck, Sparkles, SquareTerminal, Store, Sun, UserRound, Users, type LucideIcon,
+  Moon, Puzzle, ScrollText, Search, Server, ServerCog, Settings, ShieldCheck, Sparkles, SquareTerminal, Store, Sun, UserRound, Users, Waypoints, type LucideIcon,
 } from 'lucide-react'
 import { WharfMark } from '@/components/brand/WharfMark'
 import { TaskButton } from './TaskButton'
@@ -23,7 +23,7 @@ import { navGroups } from './nav'
 export const ICONS: Record<string, LucideIcon> = {
   overview: House, sites: Globe, projects: Rocket, domains: AtSign, containers: Boxes, store: Store, vms: Monitor, db: Database, files: Folder,
   pipeline: GitBranch, dev: Code2, remote: MonitorSmartphone, backup: ArchiveRestore, network: ShieldCheck, monitor: Bell,
-  audit: ScrollText, system: Server, hosts: ServerCog, extensions: Puzzle, plugins: Puzzle, cron: CalendarClock, cloudflare: Cloud, wharf: WharfMark as unknown as LucideIcon, users: Users, tokens: KeyRound, settings: Settings,
+  audit: ScrollText, system: Server, hosts: ServerCog, extensions: Puzzle, plugins: Puzzle, cron: CalendarClock, cloudflare: Cloud, proxy: Waypoints, wharf: WharfMark as unknown as LucideIcon, users: Users, tokens: KeyRound, settings: Settings,
 }
 
 // names that read better in the sidebar than the page titles do

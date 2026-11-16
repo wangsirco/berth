@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -51,8 +52,38 @@ func TestMemoryGate(t *testing.T) {
 	k := change.Kind{Name: "x", MemMB: 6000}
 	q.Submit(context.Background(), chg("m"), k, func(env change.Env) (any, *change.UndoRecipe, error) { return nil, nil, nil })
 	time.Sleep(50 * time.Millisecond)
-	if v := q.view("m"); v.WaitReason != "tasks.wait_memory" {
+	if v := q.view("m"); v.WaitReason != "tasks.wait_memory" || v.WaitParams["need"] != 6000 {
 		t.Fatalf("%+v", v)
+	}
+	// the list (read from the database) carries the numbers too
+	if l, _ := q.List("", 10); len(l) != 1 || l[0].WaitParams["need"] != 6000 {
+		t.Fatalf("list lost the wait numbers: %+v", l)
+	}
+}
+
+// A machine that never has enough memory still gets the work done, after a short wait.
+func TestMemoryWaitIsBounded(t *testing.T) {
+	old := MemWaitMax
+	MemWaitMax = 100 * time.Millisecond
+	defer func() { MemWaitMax = old }()
+	q, done := newQ(t, 1000)
+	var logged []string
+	k := change.Kind{Name: "x", MemMB: 6000}
+	q.Submit(context.Background(), chg("m"), k, func(env change.Env) (any, *change.UndoRecipe, error) { return nil, nil, nil })
+	select {
+	case got := <-done:
+		if got != "m:done" {
+			t.Fatal(got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("still waiting: %+v", q.view("m"))
+	}
+	lines, _ := q.Logs(q.view("m").ID, 0, 0)
+	for _, l := range lines {
+		logged = append(logged, l.Line)
+	}
+	if !strings.Contains(strings.Join(logged, "\n"), "6000 MB") {
+		t.Fatalf("no note about memory in the log: %v", logged)
 	}
 }
 

@@ -15,6 +15,7 @@ const SMALL = 0.03
 // services + kernel + sessions, and free memory last (方案 §5.1).
 export function layoutBerths(items: Berth[], total: number): Segment[] {
   const apps = new Map<string, Segment>()
+  const vms: Segment[] = []
   let sys: Segment | null = null
   let free: Segment | null = null
   for (const b of items) {
@@ -25,6 +26,8 @@ export function layoutBerths(items: Berth[], total: number): Segment[] {
       s.cpu += b.cpu
       s.members.push(b.name)
       apps.set(key, s)
+    } else if (b.type === 'vm') {
+      vms.push({ key: 'vm:' + b.name, label: b.name, bytes: b.mem_bytes, pct: 0, kind: 'vm', color: 'var(--berth-vm)', cpu: b.cpu, members: [b.name] })
     } else if (b.type === 'free') {
       free = { key: 'free', label: 'free', bytes: b.mem_bytes, pct: 0, kind: 'free', color: '', cpu: 0, members: [] }
     } else {
@@ -42,6 +45,7 @@ export function layoutBerths(items: Berth[], total: number): Segment[] {
   if (small.length) {
     out.push({ key: 'more', label: '…' + small.length, bytes: small.reduce((a, s) => a + s.bytes, 0), pct: 0, kind: 'more', color: 'var(--berth-app-3)', cpu: small.reduce((a, s) => a + s.cpu, 0), members: small.flatMap((s) => s.members) })
   }
+  out.push(...vms.filter((v) => v.bytes / sum >= SMALL / 3))
   if (sys) out.push(sys)
   if (free) out.push(free)
   const all = out.reduce((a, s) => a + s.bytes, 0) || 1
@@ -74,7 +78,7 @@ export function BerthBar({ berths, host }: { berths: Berth[]; host?: Host }) {
             <Tooltip.Root key={s.key}>
               <Tooltip.Trigger
                 render={<button aria-label={`${label(s)} ${bytes(s.bytes)}`} />}
-                onClick={() => (s.target ? nav(hostPath(h, 'containers/c/' + encodeURIComponent(s.target))) : s.kind === 'app' ? nav(hostPath(h, 'containers/compose/' + encodeURIComponent(s.label))) : undefined)}
+                onClick={() => (s.target ? nav(hostPath(h, 'containers/c/' + encodeURIComponent(s.target))) : s.kind === 'app' ? nav(hostPath(h, 'containers/compose/' + encodeURIComponent(s.label))) : s.kind === 'vm' ? nav(hostPath(h, 'vms')) : undefined)}
                 style={{ width: s.pct + '%', background: s.color }}
                 className={`flex min-w-0 flex-col justify-center overflow-hidden whitespace-nowrap px-2 text-left text-[11.5px] leading-tight ${i % 3 === 2 && s.kind === 'app' ? 'text-[#10302c] dark:text-white' : 'text-white'} ${s.kind === 'more' ? 'text-[#10302c] dark:text-white' : ''} border-r-2 border-canvas`}>
                 {s.pct > 6 && <span className="truncate">{label(s)}</span>}
@@ -97,7 +101,7 @@ export function BerthBar({ berths, host }: { berths: Berth[]; host?: Host }) {
         <span><i className="mr-1.5 inline-block size-2.5 align-[-1px]" style={{ background: 'var(--berth-app)' }} />{t('berth.legend_app')}</span>
         <span><i className="mr-1.5 inline-block size-2.5 align-[-1px]" style={{ background: 'var(--berth-sys)' }} />{t('berth.legend_sys')}</span>
         <span><i className="mr-1.5 inline-block size-2.5 border border-line align-[-1px]" style={{ background: 'repeating-linear-gradient(135deg, var(--berth-free-a) 0 2px, var(--berth-free-b) 2px 3px)' }} />{t('berth.legend_free')}</span>
-        <span className="opacity-70">{t('berth.legend_later')}</span>
+        <span><i className="mr-1.5 inline-block size-2.5 align-[-1px]" style={{ background: 'var(--berth-vm)' }} />{t('berth.legend_vm')}</span>
       </div>
     </section>
   )

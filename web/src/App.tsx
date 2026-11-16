@@ -44,6 +44,9 @@ const Dev = lazy(() => import('./pages/dev/DevPage'))
 const Remote = lazy(() => import('./pages/remote/RemotePage'))
 const System = lazy(() => import('./pages/system/SystemPage'))
 const RemoteViewer = lazy(() => import('./pages/remote/ViewerPage'))
+const AcceptInvite = lazy(() => import('./pages/invite/AcceptInvitePage'))
+const SharedViewer = lazy(() => import('./pages/remote/SharedViewer'))
+const Proxy = lazy(() => import('./pages/proxy/ProxyPage'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 const Plugins = lazy(() => import('./pages/plugins/PluginsPage'))
 const ExtensionView = lazy(() => import('./pages/extensions/ExtensionsPage').then((m) => ({ default: m.ExtensionView })))
@@ -57,6 +60,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/setup/:code" element={<Setup />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/shared" element={<SharedViewer />} />
         <Route path="/cli-auth" element={<RequireAuth><CliAuth /></RequireAuth>} />
         <Route path="/welcome" element={<RequireAuth><Welcome /></RequireAuth>} />
         <Route path="/remote/:id" element={<RequireAuth><RemoteViewer /></RequireAuth>} />
@@ -74,6 +79,7 @@ export default function App() {
           <Route path="projects/*" element={<Projects />} />
           <Route path="domains/*" element={<Domains />} />
           <Route path="cloudflare/*" element={<Cloudflare />} />
+          <Route path="proxy" element={<Proxy />} />
           <Route path="cron" element={<Cron />} />
           <Route path="wharf" element={<WharfHome />} />
           <Route path="store/*" element={<Store />} />

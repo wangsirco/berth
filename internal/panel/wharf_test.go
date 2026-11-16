@@ -97,6 +97,28 @@ func TestWharfLink(t *testing.T) {
 		t.Fatal("mapping left after deleting the site")
 	}
 
+	// ---- port check, and mapping a bare port ----
+	_, pc := c.do("GET", "/api/v1/wharf/port-check?port=8000", nil)
+	if len(pc["forwards"].([]any)) != 0 || pc["ok"] != true || pc["target_ip"] != "192.168.1.20" {
+		t.Fatalf("free port: %v", pc)
+	}
+	nf := len(wf.Forwards)
+	fwd := run("wharf.forward", map[string]any{"wan_port": "8000"})
+	if len(wf.Forwards) != nf+1 {
+		t.Fatalf("not mapped: %v", wf.Forwards)
+	}
+	_, pc = c.do("GET", "/api/v1/wharf/port-check?port=8000", nil)
+	if fw := pc["forwards"].([]any); len(fw) != 1 || fw[0].(map[string]any)["mine"] != true || pc["ok"] != false || len(pc["issues"].([]any)) != 1 {
+		t.Fatalf("taken port: %v", pc)
+	}
+	c.do("POST", "/api/v1/changes/"+fwd["id"].(string)+"/revert", nil)
+	for i := 0; i < 40 && len(wf.Forwards) != nf; i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(wf.Forwards) != nf {
+		t.Fatalf("undo left the mapping: %v", wf.Forwards)
+	}
+
 	// ---- 443 SNI registration ----
 	if r, _ := c.do("POST", "/api/v1/hosts/local/changes/wharf.publish", map[string]any{"site_id": sid2, "mode": "sni"}); r.StatusCode == 200 {
 		time.Sleep(200 * time.Millisecond)

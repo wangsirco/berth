@@ -86,15 +86,15 @@ The script does everything:
 2. installs what is needed: Docker CE (from Docker's repository, with the Compose plugin), nftables, tc, smartmontools, acl, curl and certificates — plus a 4K-page compatibility layer (libkrun) on Apple silicon machines with 16K pages;
 3. downloads the package and verifies its SHA-256;
 4. creates the `berth` system user and folders, installs and starts the `berth-agent` and `berth-panel` services;
-5. opens the panel port 7090 in the firewall **to private networks only** (LAN, Tailscale);
+5. detects the public IP and **asks whether to open the panel to the internet**: usually yes on a cloud server (a security entry is set, the firewall opened and two-step sign-in required; remember to allow TCP 7090 in the provider's security group), no at home (LAN and Tailscale only, or a Cloudflare Tunnel later);
 6. prints a setup link — open it within 10 minutes to create the super admin.
 
-Run it again to upgrade in place; your data stays. Add `--ask` to confirm each step: `… | sudo sh -s -- --ask`.
+Run it again to upgrade in place; your data stays. Add `--ask` to confirm each step: `… | sudo sh -s -- --ask`; add `--public` or `--private` to skip the public-access question.
 
 ### Requirements
 
-- **Architecture: ARM64.** Every ARM machine should work today. **x86 is on the way — stay tuned.**
-- **System:** Fedora / Fedora Asahi Remix, Debian, Ubuntu, Rocky Linux, AlmaLinux, with systemd.
+- **Architecture: ARM64.** Compatible with basically every ARM server: Apple M-series Macs, Raspberry Pi, ARM cloud servers (AWS Graviton, Oracle Ampere, Alibaba Yitian…). **x86 is on the way — stay tuned.**
+- **System:** Fedora / Fedora Asahi Remix, Debian, Ubuntu, Rocky Linux, AlmaLinux, with systemd. **Tested so far on Fedora** (Fedora Asahi Remix on real hardware and a Fedora VM); the others should work, and issues are welcome.
 - **Memory:** 1 GB or more; 4 GB or more for apps and VMs.
 - **So far** Berth has been developed and tuned on **Apple M-series chips with Fedora Asahi Remix** — the combination we recommend and have tested most.
 
@@ -104,6 +104,7 @@ Optional parts, installed from the panel when you need them: Incus (VMs), restic
 
 - Open `https://<server IP>:7090`. The panel uses its own local certificate, so the browser warns the first time; compare the fingerprint printed at the end of the install.
 - Turn on the **security entry** in Settings and **two-factor sign-in** for administrators.
+- To reach the panel from outside later, pick a way under Settings → General → Access, or run `sudo berth admin public on` on the server.
 
 ### Forgot the security entry or the password
 
@@ -120,6 +121,7 @@ sudo berth admin info                 # address, security entry, administrators
 sudo berth admin entry /mypanel88     # change the security entry (off to turn it off)
 sudo berth admin username newname     # rename the administrator
 sudo berth admin password --random    # generate a new random password
+sudo berth admin public on            # open public access (off to close)
 ```
 
 ### Upgrade and uninstall

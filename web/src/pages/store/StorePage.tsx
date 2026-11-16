@@ -1,3 +1,4 @@
+import { ResourceFit } from '@/components/ResourceFit'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useChange } from '@/components/change/ChangeDialog'
@@ -146,11 +147,12 @@ function InstallDialog({ app, onClose, onSite }: { app: CatalogApp; onClose: () 
       </>}>
       <div className="space-y-3 px-4 py-3 text-[13.5px]">
         <div className="flex flex-wrap gap-2 text-[12.5px] text-mute">
-          <Verified v={app.verified} /><span>{t('store.needs', { mem: app.mem_mb, disk: app.disk_mb })}</span><span>· {app.arch.join(' / ')}</span>
+          <Verified v={app.verified} /><span>{app.arch.join(' / ')}</span>
           {app.website && <a className="text-acc hover:underline" href={app.website} target="_blank" rel="noreferrer">{t('store.website')}</a>}
         </div>
         {app.verified.arm64_16k === 'crash' && <Notice tone="warn">{t('store.crash_hint')}</Notice>}
-        {checks.length > 0 && <div className="space-y-1">{checks.map((c, i) => <Notice key={i} tone={c.block ? 'bad' : 'warn'}>{c.message}</Notice>)}</div>}
+        <ResourceFit host={host} memMB={app.mem_mb + 1024} runMB={app.mem_mb} diskMB={app.disk_mb} impacts={['fit.app_install', 'fit.app_run']} />
+        {checks.filter((c) => c.code !== 'app.check_memory').length > 0 && <div className="space-y-1">{checks.filter((c) => c.code !== 'app.check_memory').map((c, i) => <Notice key={i} tone={c.block ? 'bad' : 'warn'}>{c.message}</Notice>)}</div>}
         <Field label={t('store.instance')} hint={t('store.instance_hint')}><Input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} /></Field>
         <div className="grid gap-2 sm:grid-cols-2">
           {app.fields.map((f) => (

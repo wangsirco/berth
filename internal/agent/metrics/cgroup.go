@@ -144,3 +144,38 @@ func Berths(h Host, running []ContainerRef) []Berth {
 	out = append(out, Berth{Type: "free", ID: "free", Name: "free", MemBytes: h.MemAvail})
 	return out
 }
+
+// withVMs adds one segment per running VM or system container, just before kernel and free.
+// Their memory was counted inside incus.service (VMs: the qemu process) or as kernel/other
+// (containers: lxc.payload), so it comes out of those, never below zero.
+func withVMs(bs []Berth, vms []Berth) []Berth {
+	if len(vms) == 0 {
+		return bs
+	}
+	var inVM, inCT int64
+	for _, v := range vms {
+		if v.Project == "virtual-machine" {
+			inVM += v.MemBytes
+		} else {
+			inCT += v.MemBytes
+		}
+	}
+	var head, tail []Berth
+	for _, b := range bs {
+		switch b.Type {
+		case "service":
+			if b.ID == "incus.service" {
+				b.MemBytes = max(0, b.MemBytes-inVM)
+			}
+			head = append(head, b)
+		case "kernel":
+			b.MemBytes = max(0, b.MemBytes-inCT)
+			tail = append(tail, b)
+		case "free":
+			tail = append(tail, b)
+		default:
+			head = append(head, b)
+		}
+	}
+	return append(append(head, vms...), tail...)
+}

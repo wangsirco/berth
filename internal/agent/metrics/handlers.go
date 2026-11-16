@@ -67,6 +67,9 @@ func du() []DiskUse {
 	return out
 }
 
+// VMs lists the running virtual machines and system containers with their memory (nil: none).
+var VMs func(ctx context.Context) []Berth
+
 func Register(s *agent.Server, smp *Sampler, dc *docker.Client) {
 	var cache duCache
 	s.Handle("GET /v1/metrics/host", func(w http.ResponseWriter, r *http.Request, _ []byte) {
@@ -86,7 +89,13 @@ func Register(s *agent.Server, smp *Sampler, dc *docker.Client) {
 				}
 			}
 		}
-		agent.WriteJSON(w, 200, Berths(smp.Host(), running))
+		var vms []Berth
+		if VMs != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			vms = VMs(ctx)
+			cancel()
+		}
+		agent.WriteJSON(w, 200, withVMs(Berths(smp.Host(), running), vms))
 	})
 	s.Handle("GET /v1/metrics/disk-berths", func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		items, at := cache.get()

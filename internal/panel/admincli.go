@@ -7,6 +7,7 @@ package panel
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"errors"
@@ -17,6 +18,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/wangsirco/berth/internal/agent"
 )
 
 type adminCLI struct {
@@ -63,6 +66,11 @@ func AdminCLI(db *sql.DB, cfg Config, args []string) error {
 		return c.username(v)
 	case "password":
 		return c.password(len(args) > 1 && args[1] == "--random")
+	case "public":
+		if len(args) < 2 || (args[1] != "on" && args[1] != "off") {
+			return errors.New("berth admin public on|off")
+		}
+		return c.public(args[1] == "on")
 	case "help", "-h", "--help":
 		c.help()
 		return nil
@@ -78,7 +86,9 @@ berth admin entry /abc123   修改安全入口 / change the security entry
 berth admin entry off       关闭安全入口 / turn the security entry off
 berth admin username NAME   修改管理员用户名 / rename the administrator
 berth admin password        修改管理员密码 / set the administrator's password
-berth admin password --random   生成随机密码 / generate a random password`)
+berth admin password --random   生成随机密码 / generate a random password
+berth admin public on       开启公网访问（任何地址都能打开面板，需要安全入口）/ open the panel to the internet
+berth admin public off      关闭公网访问（只允许内网）/ private networks only`)
 }
 
 func (c *adminCLI) ask(zh, en string) string {
@@ -97,6 +107,11 @@ func (c *adminCLI) menu() error {
 		fmt.Println(" 4) 修改管理员用户名 / Rename the administrator")
 		fmt.Println(" 5) 修改管理员密码 / Set the administrator's password")
 		fmt.Println(" 6) 生成随机密码 / Generate a random password")
+		if c.setting("access.public") == "1" {
+			fmt.Println(" 7) 关闭公网访问 / Close public access")
+		} else {
+			fmt.Println(" 7) 开启公网访问 / Open public access")
+		}
 		fmt.Println(" 0) 退出 / Quit")
 		var err error
 		switch c.ask("请选择", "Choose") {
@@ -112,6 +127,8 @@ func (c *adminCLI) menu() error {
 			err = c.password(false)
 		case "6":
 			err = c.password(true)
+		case "7":
+			err = c.public(c.setting("access.public") != "1")
 		case "0", "q", "":
 			return nil
 		default:
@@ -170,6 +187,18 @@ func (c *adminCLI) info() error {
 	say("面板地址：", "Panel address:")
 	for _, u := range c.addresses() {
 		fmt.Println("   " + u + entry)
+	}
+	if c.setting("access.public") == "1" || c.cfg.Public {
+		say("公网访问：已开启（任何地址都能打开面板，靠安全入口和二步验证保护）", "Public access: on (any address may open the panel; the entry and two-step sign-in protect it)")
+		if ip, _, _, err := agent.PublicIP(context.Background(), "4", agent.PublicIPSources["4"]); err == nil {
+			_, port, _ := net.SplitHostPort(c.cfg.Listen)
+			if port == "" {
+				port = "7090"
+			}
+			sayf("公网地址：https://%s:%s%s", "Public address: https://%s:%s%s", ip, port, entry)
+		}
+	} else {
+		say("公网访问：未开启（只有内网和 Tailscale 能打开面板；sudo berth admin public on 开启）", "Public access: off (private networks and Tailscale only; sudo berth admin public on)")
 	}
 	if entry == "" {
 		say("安全入口：未启用（任何人都能看到登录页）", "Security entry: off (anyone can see the sign-in page)")
@@ -342,4 +371,75 @@ func (c *adminCLI) secret(zh, en string) string {
 	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 	fmt.Println()
 	return strings.TrimSpace(s)
+}
+
+// public turns public access on or off: the setting, a security entry (made up when
+// missing), and the panel port in firewalld or ufw. Cloud security groups are outside
+// this machine, so it says so.
+func (c *adminCLI) public(on bool) error {
+	_, port, _ := net.SplitHostPort(c.cfg.Listen)
+	if port == "" {
+		port = "7090"
+	}
+	if on && c.setting("access.entry") == "" {
+		e := "/" + randomString(10, "abcdefghijkmnpqrstuvwxyz23456789")
+		if err := c.setSetting("access.entry", e); err != nil {
+			return err
+		}
+		sayf("已生成安全入口 %s（不带它访问，面板只回 404）", "Made a security entry %s (without it the panel answers 404)", e)
+	}
+	v := ""
+	if on {
+		v = "1"
+	}
+	if err := c.setSetting("access.public", v); err != nil {
+		return err
+	}
+	c.openPort(port, on)
+	if on {
+		say("✓ 公网访问已开启。用的是云服务器的话，还要在云服务商控制台的「安全组 / 防火墙」里放行 TCP "+port+"。",
+			"✓ Public access is on. On a cloud server, also allow TCP "+port+" in the provider's security group / firewall.")
+		say("  强烈建议登录后马上开启二步验证。", "  Turn on two-step sign-in right after you sign in.")
+	} else {
+		say("✓ 公网访问已关闭，只有内网和 Tailscale 能打开面板。", "✓ Public access is off: private networks and Tailscale only.")
+	}
+	var n int
+	c.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	if n == 0 {
+		// the restarted panel writes a fresh setup link; drop the old one so nobody waits on it
+		os.Remove(filepath.Join(c.cfg.DataDir, "setup-url"))
+	}
+	c.restart()
+	return c.info()
+}
+
+func (c *adminCLI) openPort(port string, on bool) {
+	if exec.Command("firewall-cmd", "--state").Run() == nil {
+		op := "--remove-port=" + port + "/tcp"
+		if on {
+			op = "--add-port=" + port + "/tcp"
+		}
+		exec.Command("firewall-cmd", op).Run()
+		if err := exec.Command("firewall-cmd", "--permanent", op).Run(); err == nil {
+			c.portSaid("firewalld", port, on)
+		}
+		return
+	}
+	if out, err := exec.Command("ufw", "status").Output(); err == nil && strings.Contains(string(out), "Status: active") {
+		args := []string{"allow", port + "/tcp"}
+		if !on {
+			args = []string{"delete", "allow", port + "/tcp"}
+		}
+		if exec.Command("ufw", args...).Run() == nil {
+			c.portSaid("ufw", port, on)
+		}
+	}
+}
+
+func (c *adminCLI) portSaid(fw, port string, on bool) {
+	if on {
+		sayf(fw+"：已放行 %s/tcp", fw+": opened %s/tcp", port)
+	} else {
+		sayf(fw+"：已关闭 %s/tcp", fw+": closed %s/tcp", port)
+	}
 }

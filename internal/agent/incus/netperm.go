@@ -246,6 +246,18 @@ func (c *Client) SetNetwork(ctx context.Context, name, mode, parent, egress stri
 	if _, err := os.Stat("/sys/class/net/" + parent + "/bridge"); err == nil {
 		bridge = true
 	}
+	// a running VM cannot let go of its network card while running (the hot-unplug times out):
+	// stop it first, change the card, start it again
+	running := strings.EqualFold(inst.Status, "running")
+	stopped := false
+	if running && inst.Type == "virtual-machine" {
+		if err := c.SetState(ctx, name, "stop", false); err != nil {
+			if err := c.SetState(ctx, name, "stop", true); err != nil {
+				return nil, err
+			}
+		}
+		stopped = true
+	}
 	err = c.put(ctx, name, func(cfg map[string]any, devs map[string]any) {
 		for k := range devs {
 			if forwardRe.MatchString(k) && mode != "nat" {
@@ -275,12 +287,20 @@ func (c *Client) SetNetwork(ctx context.Context, name, mode, parent, egress stri
 		}
 	})
 	if err != nil {
+		if stopped {
+			c.SetState(ctx, name, "start", false) // leave it as it was
+		}
 		return nil, err
 	}
 	if mode != "nat" || egress == "all" {
 		c.dropACL(ctx, name)
 	}
-	if strings.EqualFold(inst.Status, "running") {
+	switch {
+	case stopped:
+		if err := c.SetState(ctx, name, "start", false); err != nil {
+			return removed, err
+		}
+	case running:
 		if err := c.SetState(ctx, name, "restart", true); err != nil {
 			return removed, err
 		}

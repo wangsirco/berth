@@ -18,6 +18,7 @@ export const GROUPS: NavGroup[] = [
   { key: 'net', items: [
     { key: 'domains', path: 'domains', perm: 'sites.view' },
     { key: 'cloudflare', path: 'cloudflare', perm: 'network.view' },
+    { key: 'proxy', path: 'proxy', perm: 'network.manage' },
     { key: 'network', path: 'network', perm: 'network.view' },
   ] },
   { key: 'build', items: [
@@ -40,7 +41,7 @@ export const GROUPS: NavGroup[] = [
   ] },
 ]
 
-// ALL is every page, flat (search, the "later" page).
+// ALL is every page, flat (used by search).
 export const ALL: NavItem[] = GROUPS.flatMap((g) => g.items)
 
 // navGroups keeps what the user may see and drops groups left empty.

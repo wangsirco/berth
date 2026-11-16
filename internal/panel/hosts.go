@@ -151,12 +151,30 @@ func (a *App) handleJoinCode(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	base := panelBase(r)
 	// Fetch the CA without verification, check its hash, then use it for everything else.
-	cmd := fmt.Sprintf(`curl -fsSk %[1]s/api/v1/ca.crt -o /tmp/berth-ca.crt && echo "%[2]s  /tmp/berth-ca.crt" | sha256sum -c --quiet && curl -fsS --cacert /tmp/berth-ca.crt %[1]s/join/%[3]s | { if [ "$(id -u)" = 0 ]; then sh; else sudo sh; fi; }`,
-		base, a.caPEMHash(), code)
+	mk := func(base string) string {
+		return fmt.Sprintf(`curl -fsSk %[1]s/api/v1/ca.crt -o /tmp/berth-ca.crt && echo "%[2]s  /tmp/berth-ca.crt" | sha256sum -c --quiet && curl -fsS --cacert /tmp/berth-ca.crt %[1]s/join/%[3]s | { if [ "$(id -u)" = 0 ]; then sh; else sudo sh; fi; }`,
+			base, a.caPEMHash(), code)
+	}
+	// one command per way to reach this panel: the LAN address, the public one and
+	// the address this browser used (when it differs)
+	type via struct {
+		Via     string `json:"via"`
+		Base    string `json:"base"`
+		Command string `json:"command"`
+	}
+	var cmds []via
+	seen := map[string]bool{}
+	for _, v := range []via{{Via: "lan", Base: a.panelURL("panel.lan_host")}, {Via: "public", Base: a.panelURL("panel.public_host")}, {Via: "current", Base: panelBase(r)}} {
+		if v.Base == "" || seen[v.Base] {
+			continue
+		}
+		seen[v.Base] = true
+		v.Command = mk(v.Base)
+		cmds = append(cmds, v)
+	}
 	a.recordHostEvent(currentActor(r), "host.join_code", in.Name, map[string]any{"name": in.Name, "expires_at": exp.Unix()})
-	writeJSON(w, 200, map[string]any{"code": code, "name": in.Name, "expires_at": exp.Unix(), "command": cmd})
+	writeJSON(w, 200, map[string]any{"code": code, "name": in.Name, "expires_at": exp.Unix(), "command": cmds[0].Command, "commands": cmds})
 }
 
 // pendingJoin returns the host name for a valid, unused code.

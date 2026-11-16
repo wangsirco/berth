@@ -66,7 +66,7 @@ export function Shell() {
             </div>
             <main className="mx-auto w-full max-w-[1280px] px-3 py-4 sm:px-8 sm:py-6">{host !== 'local' && !hosts.data?.items.some((h) => h.name === host)
               ? hosts.data && <Empty title={t('shell.no_host', { host })} action={<Button onClick={() => nav('/local/overview')}>{t('shell.to_local')}</Button>} />
-              : <><FirewallPending host={host} /><PageTitle /><Outlet /></>}</main>
+              : <><FirewallPending host={host} />{user?.needs_2fa && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-[var(--radius-box)] border border-bad bg-bad/10 px-3.5 py-2.5 text-[13px]"><b>{t('pub.banner')}</b><span className="text-mute">{t('pub.banner_d')}</span><Button size="sm" variant="primary" className="ml-auto" onClick={() => nav('/account')}>{t('pub.banner_btn')}</Button></div>}<PageTitle /><Outlet /></>}</main>
           </div>
         </div>
         <Drawer open={menu} onOpenChange={setMenu} side="left" title={t('shell.nav')} className="bg-soft">

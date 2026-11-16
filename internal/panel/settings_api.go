@@ -25,7 +25,7 @@ type settingDef struct {
 var localNameRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+(lan|local|home\.arpa|internal)$`)
 
 // CertNames are extra host names for the panel's certificate (settings access.names).
-func (a *App) CertNames() []string { return splitList(a.setting("access.names")) }
+func (a *App) CertNames() []string { return a.certNamesOf() }
 
 var entryRe = regexp.MustCompile(`^/[a-zA-Z0-9][a-zA-Z0-9_-]{5,31}$`)
 
@@ -56,6 +56,9 @@ var settingDefs = map[string]settingDef{
 		}
 		return nil
 	}},
+	"access.public":     {validate: boolSetting},
+	"panel.lan_host":    {validate: validLanHost},
+	"panel.public_host": {validate: validPublicHost},
 	"access.names": {validate: func(v string) error {
 		for _, n := range splitList(v) {
 			if !localNameRe.MatchString(strings.ToLower(n)) {
@@ -161,6 +164,11 @@ func init() {
 					return nil, nil, err
 				}
 			}
+			if _, ok := p.Values["panel.lan_host"]; ok && a.certRefresh != nil {
+				go a.certRefresh()
+			} else if _, ok := p.Values["access.names"]; ok && a.certRefresh != nil {
+				go a.certRefresh()
+			}
 			u, _ := json.Marshal(map[string]any{"values": old})
 			return nil, &change.UndoRecipe{Kind: "settings.update", Params: u}, nil
 		},
@@ -189,7 +197,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if out["access.allow_cidrs"] == "" {
 		out["access.allow_cidrs"] = strings.Join(a.cfg.AllowCIDRs, "\n")
 	}
-	writeJSON(w, 200, map[string]any{"values": out, "public": a.cfg.Public, "ca_fingerprint": a.caFingerprint, "client_ip": a.clientIP(r)})
+	writeJSON(w, 200, map[string]any{"values": out, "public": a.isPublic(), "ca_fingerprint": a.caFingerprint, "client_ip": a.clientIP(r)})
 }
 
 // PUT /api/v1/settings {values} — one change for all values (with ?plan=1 support).
@@ -210,11 +218,45 @@ func (a *App) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 				allowed = true
 			}
 		}
-		if !allowed && !a.cfg.Public {
+		if !allowed && !a.isPublic() && in.Values["access.public"] != "1" {
 			a.fail(w, r, errs.New(400, "settings.would_lock_out", "ip", a.clientIP(r)))
 			return
 		}
 		in.Values["access.allow_cidrs"] = strings.Join(splitList(cidrs), ",")
+	}
+	if pub, ok := in.Values["access.public"]; ok && pub == "" && a.isPublic() && !a.cfg.Public {
+		// closing public access from outside the allowlist would cut this browser off
+		ip := net.ParseIP(a.clientIP(r))
+		inside := false
+		nets := a.allowNets()
+		if cidrs, ok := in.Values["access.allow_cidrs"]; ok {
+			nets = nil
+			for _, c := range splitList(cidrs) {
+				if _, n, err := net.ParseCIDR(c); err == nil {
+					nets = append(nets, n)
+				}
+			}
+		}
+		for _, n := range nets {
+			if ip != nil && n.Contains(ip) {
+				inside = true
+			}
+		}
+		if !inside {
+			a.fail(w, r, errs.New(400, "settings.would_lock_out", "ip", a.clientIP(r)))
+			return
+		}
+	}
+	if pub, ok := in.Values["access.public"]; ok && pub == "1" {
+		// open to the whole internet only behind a security entry
+		entry, given := in.Values["access.entry"]
+		if !given {
+			entry = a.setting("access.entry")
+		}
+		if entry == "" {
+			a.fail(w, r, errs.New(400, "settings.public_needs_entry"))
+			return
+		}
 	}
 	if entry, ok := in.Values["access.entry"]; ok && entry != "" && r.URL.Query().Get("plan") != "1" {
 		// the person setting the entry path keeps access from this browser

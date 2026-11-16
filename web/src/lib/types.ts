@@ -14,6 +14,7 @@ export interface User {
   created_at: number
   last_login_at: number
   simple?: boolean
+  needs_2fa?: boolean // public access is on and this account has no second factor yet
 }
 
 export interface Actor { type: string; id: string; name: string; via: string; ip: string; ai_session?: string; intent?: string }
@@ -103,7 +104,7 @@ export interface Host {
   uptime: number
 }
 
-export interface Berth { type: 'container' | 'service' | 'user' | 'kernel' | 'free'; id: string; name: string; mem_bytes: number; cpu: number; project?: string }
+export interface Berth { type: 'container' | 'service' | 'user' | 'kernel' | 'free' | 'vm'; id: string; name: string; mem_bytes: number; cpu: number; project?: string }
 
 export interface Caps { OS: string; OSVersion: string; Kernel: string; Arch: string; DockerVersion: string; PageSize: number; Docker: boolean }
 export interface HostInfo { name: string; online: boolean; last_seen: number; caps?: Caps }

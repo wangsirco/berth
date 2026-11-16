@@ -2,6 +2,8 @@ import { Download } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { ImportDialog } from '@/components/import/ImportDialog'
+import { PublicAccessSettings } from '@/components/access/PublicAccess'
+import { PanelAddress } from '@/components/access/PanelAddress'
 import { Box } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select, Switch, Textarea } from '@/components/ui/Field'
@@ -56,9 +58,10 @@ function General() {
         </Field>
       </Box>
       <Box title={t('settings.access')}>
+        <Field label={t('welcome.public')}><PublicAccessSettings entry={orig['access.entry'] ?? ''} onSaved={() => void s.reload()} /></Field>
         <Field label={t('welcome.entry')} hint={t('welcome.entry_hint')}><Input className="num" value={v['access.entry'] ?? ''} onChange={set('access.entry')} placeholder={t('settings.entry_off')} /></Field>
-        <Field label={t('welcome.cidrs')} hint={t('welcome.cidrs_hint', { ip: s.data.client_ip })}><Textarea className="num h-28 text-[12.5px]" value={v['access.allow_cidrs'] ?? ''} onChange={set('access.allow_cidrs')} /></Field>
-        <Field label={t('welcome.public')}><p className="text-[13px] text-mute">{t('welcome.public_later')}</p></Field>
+        <Field label={t('welcome.cidrs')} hint={s.data.public ? t('pub.cidrs_off') : t('welcome.cidrs_hint', { ip: s.data.client_ip })}><Textarea className="num h-28 text-[12.5px]" value={v['access.allow_cidrs'] ?? ''} onChange={set('access.allow_cidrs')} /></Field>
+        <PanelAddress lan={v['panel.lan_host'] ?? ''} pub={v['panel.public_host'] ?? ''} savedPub={orig['panel.public_host'] ?? ''} onChange={(k, x) => setV({ ...v, [k]: x })} />
         <Field label={t('settings.ca')} className="pb-3">
           <p className="num break-all text-[12px] text-mute">{s.data.ca_fingerprint}</p>
           <a href="/api/v1/ca.crt" download><Button size="sm" className="mt-2"><Download className="size-3.5" />{t('settings.ca_download')}</Button></a>

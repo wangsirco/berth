@@ -4,11 +4,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/wangsirco/berth/main/scripts/install.sh | sudo sh
 #
 # 自动完成：检查系统 → 安装依赖（Docker、nftables、tc、smartmontools、acl…）→ 下载并校验
-# 安装包 → 创建用户和目录 → 安装并启动服务 → 放行面板端口（仅内网）→ 打印初始化链接。
+# 安装包 → 创建用户和目录 → 安装并启动服务 → 问要不要对公网开放 → 放行面板端口 → 打印初始化链接。
 # 已经装过时就地升级，数据保留。
 # Does it all: checks the system, installs what is missing (Docker, nftables, tc, smartmontools,
 # acl…), downloads and verifies the package, creates the user and folders, installs and starts
-# the services, opens the panel port to private networks only and prints the setup link.
+# the services, asks whether the panel should be reachable from the internet, opens its port
+# accordingly and prints the setup link.
 # Run it again to upgrade in place; your data stays.
 #
 # 选项 / options:
@@ -16,6 +17,10 @@
 #   --local DIR     从解压好的安装包安装 / install from an unpacked release
 #   --version V     安装指定版本 / install version V (default: latest)
 #   --no-start      只装文件不启动 / install files only
+#   --public        对公网开放面板（云服务器）/ open the panel to the internet (cloud servers)
+#   --private       只允许内网访问 / private networks only
+#   不加时会问；没有终端可问时，公网 IP 直接在网卡上就开放。
+#   Without either it asks; with no terminal to ask on, it opens when the public IP is on a NIC.
 #
 # 不想用 curl | sh？/ Rather not pipe to sh?
 #   1. 在 Releases 页面下载 berth_<版本>_linux_arm64.tar.gz 和 SHA256SUMS
@@ -25,6 +30,7 @@
 set -eu
 
 BASE_URL=${BERTH_URL:-https://github.com/wangsirco/berth/releases}
+PUBLIC=${BERTH_PUBLIC:-}
 YES=1 LOCAL=${BERTH_LOCAL:-} WANT=${BERTH_VERSION:-latest} START=1 SRC=""  # not VERSION: /etc/os-release sets that
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -33,6 +39,8 @@ while [ $# -gt 0 ]; do
     --local) LOCAL=$2; shift ;;
     --version) WANT=$2; shift ;;
     --no-start) START=0 ;;
+    --public) PUBLIC=1 ;;
+    --private) PUBLIC=0 ;;
     *) echo "未知选项 / unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -103,16 +111,38 @@ if ! { command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>
       dnf -y -q install dnf-plugins-core >/dev/null 2>&1
       dnf config-manager addrepo --overwrite --from-repofile="https://download.docker.com/linux/$DOCKER_DISTRO/docker-ce.repo" >/dev/null 2>&1 \
         || dnf config-manager --add-repo "https://download.docker.com/linux/$DOCKER_DISTRO/docker-ce.repo" >/dev/null 2>&1
-      dnf -y -q install docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin >/dev/null
+      dnf -y -q install docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin >/dev/null \
+        || die "Docker 安装失败（dnf），可以加 --ask 跳过 Docker 先装面板" "Installing Docker failed (dnf); add --ask to skip Docker and install the panel first"
     else
       apt-get install -y -qq ca-certificates curl gnupg >/dev/null
       install -m 0755 -d /etc/apt/keyrings
       curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
       echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$ID ${VERSION_CODENAME:-stable} stable" > /etc/apt/sources.list.d/docker.list
-      apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin >/dev/null
+      { apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin >/dev/null; } \
+        || die "Docker 安装失败（apt），可以加 --ask 跳过 Docker 先装面板" "Installing Docker failed (apt); add --ask to skip Docker and install the panel first"
     fi
-    systemctl enable --now docker >/dev/null 2>&1
     installed_by_berth="$installed_by_berth docker-ce docker-compose-plugin"
+    if ! systemctl enable --now docker >/dev/null 2>&1; then
+      # no iptables kernel modules (containers, some VPS kernels): Docker can use nftables instead
+      if journalctl -u docker -n 30 --no-pager 2>/dev/null | grep -q "iptables"; then
+        say "Docker 用 iptables 启动失败，改用 nftables 再试一次" "Docker could not start with iptables; trying nftables"
+        mkdir -p /etc/docker
+        python3 - <<'PYEOF' 2>/dev/null || printf '{"firewall-backend": "nftables"}\n' > /etc/docker/daemon.json
+import json, os
+p = "/etc/docker/daemon.json"
+cfg = json.load(open(p)) if os.path.exists(p) and os.path.getsize(p) > 0 else {}
+cfg["firewall-backend"] = "nftables"
+json.dump(cfg, open(p, "w"), indent=2)
+PYEOF
+        systemctl reset-failed docker >/dev/null 2>&1 || true
+        systemctl restart docker >/dev/null 2>&1 || true
+      fi
+      if ! systemctl is-active --quiet docker; then
+        why=$(journalctl -u docker -n 30 --no-pager 2>/dev/null | grep -m1 -o 'failed to start daemon: .*' | cut -c1-200)
+        warn "Docker 装好了但没能启动，容器和应用商店暂时不可用；面板照常安装。原因：${why:-看 journalctl -u docker}" \
+             "Docker is installed but did not start, so containers and the app store are unavailable for now; the panel installs anyway. Reason: ${why:-see journalctl -u docker}"
+      fi
+    fi
   else
     warn "先不装 Docker：容器相关功能会在装好 Docker 后自动可用" "Continuing without Docker: container features turn on once it is installed"
   fi
@@ -198,21 +228,57 @@ systemctl restart berth-agent
 sleep 1
 systemctl restart berth-panel
 
-# ---- firewall: only private networks may reach the panel ----
+# ---- public access: most cloud servers are reached only over the internet ----
 PORT=7090
-if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-  if ! firewall-cmd --list-rich-rules 2>/dev/null | grep -q "port=\"$PORT\""; then
-    if ask "在防火墙里只对内网放行面板端口 $PORT（局域网、Tailscale）？" "Open port $PORT to private networks only (LAN, Tailscale)?"; then
-      for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do
-        firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$net port port=$PORT protocol=tcp accept" >/dev/null
-      done
-      firewall-cmd --reload >/dev/null
-      say "已放行：只有内网能打开面板" "Opened: only private networks can reach the panel"
+PUBIP=$(curl -fs4 --max-time 5 https://api.ipify.org 2>/dev/null || curl -fs4 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null || true)
+PUBIP=$(printf '%s' "$PUBIP" | tr -cd '0-9.')
+ONIF=0
+[ -n "$PUBIP" ] && ip -4 -o addr show 2>/dev/null | grep -q " $PUBIP/" && ONIF=1
+if [ -z "$PUBLIC" ] && [ "$UPGRADE" = 1 ]; then
+  PUBLIC=keep # an upgrade keeps whatever was chosen before
+fi
+if [ -z "$PUBLIC" ]; then
+  PUBLIC=$ONIF
+  if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+    echo
+    if [ -n "$PUBIP" ]; then
+      if [ $ONIF = 1 ]; then
+        printf '  这台服务器的公网 IP：%s（直接在网卡上，像是云服务器）\n  Public IP: %s (on this machine'"'"'s network card, looks like a cloud server)\n' "$PUBIP" "$PUBIP"
+      else
+        printf '  外面看到的 IP：%s（前面有 NAT：云服务器的安全组，或家里的路由器）\n  The internet sees: %s (behind NAT: a cloud provider or a home router)\n' "$PUBIP" "$PUBIP"
+      fi
+    else
+      echo "  没有检测到公网 IPv4。/ No public IPv4 address found."
     fi
+    echo "  要从任何地方打开面板吗？云服务器一般选 y；家里的机器选 n，以后可以用 Tailscale 或 Cloudflare 隧道。"
+    echo "  Open the panel to the internet? Usually y for a cloud server; n at home (Tailscale or a Cloudflare Tunnel later)."
+    echo "  开启后会自动设置安全入口，登录后必须开启二步验证。/ An entry path is set and two-step sign-in becomes required."
+    d=n; [ "$PUBLIC" = 1 ] && d=y
+    printf '  对公网开放？/ Open to the internet? [%s] ' "$( [ $d = y ] && echo 'Y/n' || echo 'y/N')"
+    { read -r a </dev/tty; } 2>/dev/null || a=""
+    case "$a" in y|Y|yes) PUBLIC=1 ;; n|N|no) PUBLIC=0 ;; *) [ $d = y ] && PUBLIC=1 || PUBLIC=0 ;; esac
   fi
-elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then
-  for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do ufw allow from "$net" to any port "$PORT" proto tcp >/dev/null; done
-  say "已在 ufw 放行内网访问 $PORT" "ufw: port $PORT opened to private networks"
+fi
+
+if [ "$PUBLIC" = 1 ]; then
+  say "开启公网访问：任何地址都能打开面板（安全入口 + 二步验证保护）" "Opening the panel to the internet (behind a security entry and two-step sign-in)"
+  /usr/local/bin/berth-panel admin public on >/dev/null 2>&1 || warn "没能开启公网访问，稍后运行：sudo berth admin public on" "Could not open public access; run later: sudo berth admin public on"
+elif [ "$PUBLIC" = 0 ]; then
+  # only private networks may reach the panel
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if ! firewall-cmd --list-rich-rules 2>/dev/null | grep -q "port=\"$PORT\""; then
+      if ask "在防火墙里只对内网放行面板端口 $PORT（局域网、Tailscale）？" "Open port $PORT to private networks only (LAN, Tailscale)?"; then
+        for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do
+          firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$net port port=$PORT protocol=tcp accept" >/dev/null
+        done
+        firewall-cmd --reload >/dev/null
+        say "已放行：只有内网能打开面板" "Opened: only private networks can reach the panel"
+      fi
+    fi
+  elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then
+    for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do ufw allow from "$net" to any port "$PORT" proto tcp >/dev/null; done
+    say "已在 ufw 放行内网访问 $PORT" "ufw: port $PORT opened to private networks"
+  fi
 fi
 
 say "等待面板启动…" "Waiting for the panel…"
@@ -230,9 +296,20 @@ printf '\033[1;32m  ✓ Berth %s %s\033[0m\n\n' "${NEW:-}" "$( [ $UPGRADE = 1 ] 
 if [ -s /var/lib/berth/setup-url ]; then
   echo "  10 分钟内打开下面任意一个地址，创建超级管理员："
   echo "  Open one of these within 10 minutes to create the super admin:"
+  if [ "$PUBLIC" = 1 ] && [ -n "$PUBIP" ]; then
+    code=$(sed -n 's#.*/setup/##p' /var/lib/berth/setup-url | head -n1)
+    echo "    https://$PUBIP:$PORT/setup/$code"
+  fi
   sed 's/^/    /' /var/lib/berth/setup-url
 else
   echo "  面板地址 / Panel: https://${IP:-<这台机器的 IP / this machine>}:$PORT（如设置了安全入口，请在后面加上 / add your security entry if set）"
+fi
+if [ "$PUBLIC" = 1 ]; then
+  echo
+  echo "  已对公网开放。云服务器还要在服务商控制台的「安全组 / 防火墙」里放行 TCP $PORT，否则外面打不开。"
+  echo "  Open to the internet. On a cloud server also allow TCP $PORT in the provider's security group, or it stays unreachable."
+  entry=$(/usr/local/bin/berth-panel admin info 2>/dev/null | sed -n 's/^安全入口：\(\/[^（]*\)（.*/\1/p' | head -n1)
+  [ -n "$entry" ] && echo "  安全入口 / Security entry: $entry   （创建管理员后用 https://${PUBIP:-<IP>}:$PORT$entry 登录 / sign in there after setup）"
 fi
 fp=$(journalctl -u berth-panel -n 80 --no-pager 2>/dev/null | sed -n 's/.*(CA \([0-9a-f]*\)).*/\1/p' | tail -n1)
 [ -n "$fp" ] && echo "  证书指纹（浏览器提示不安全时核对）/ Certificate fingerprint: $fp"

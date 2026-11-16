@@ -12,6 +12,7 @@ import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
 import type { Change } from '@/lib/types'
 import { SoftwarePicker, type DesktopInfo } from './DesktopSoftware'
+import { ShareDialog, ShareList } from './ShareLinks'
 
 export type Proto = 'rdp' | 'vnc' | 'ssh' | 'telnet'
 export interface Conn {
@@ -32,6 +33,7 @@ export default function RemotePage() {
   const d = useApi<Data>('/api/v1/remote')
   useEvents(['change.done'], () => void d.reload())
   const [params, setParams] = useSearchParams()
+  const [sharing, setSharing] = useState<Conn | null>(null)
   const [edit, setEdit] = useState<Partial<Conn> | null>(null)
   // "远程桌面" from a VM drawer arrives here with ?add=rdp&name=…&addr=…
   useEffect(() => {
@@ -73,6 +75,7 @@ export default function RemotePage() {
               </div>
               <span className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                 <Button size="sm" variant="primary" disabled={!guacd.running} onClick={() => openRemote(c.id)}>{t('rd.connect')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setSharing(c)}>{t('shr.btn')}</Button>
                 <Button size="sm" variant="ghost" onClick={() => setEdit(c)}>{t('rd.edit')}</Button>
                 <Button size="sm" variant="ghost" onClick={() => run('rd.connection.delete', { id: c.id }, { host: 'local' })}>{t('action.rd.connection.delete')}</Button>
               </span>
@@ -80,6 +83,8 @@ export default function RemotePage() {
           ))}
         </Box>
       ))}
+      <ShareList />
+      {sharing && <ShareDialog conn={sharing} onClose={() => setSharing(null)} />}
       {edit && <ConnDialog init={edit} manage={manage} groups={groups.map(([g]) => g).filter(Boolean)} onClose={() => setEdit(null)}
         onSaved={(id) => { setEdit(null); void d.reload(); if (!edit.id && id && guacd.running) openRemote(id) }} />}
     </div>

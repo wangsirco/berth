@@ -75,7 +75,7 @@ func (a *App) networkGate(h http.Handler) http.Handler {
 // own (one-time join code or a signed request) and answers a bare 404 otherwise.
 func remoteAgentPath(p string) bool {
 	// each of these proves itself (join codes, signed webhooks, migration-code bearer tokens)
-	return strings.HasPrefix(p, "/join/") || strings.HasPrefix(p, "/hooks/pipelines/") || strings.HasPrefix(p, "/hooks/native/") || strings.HasPrefix(p, "/migrate/pull/") || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/api/ext/wharf/") || p == "/api/v1/agents/enroll" || p == "/api/v1/agents/connect" || p == "/api/v1/agents/binary" || p == "/api/v1/ca.crt"
+	return strings.HasPrefix(p, "/join/") || strings.HasPrefix(p, "/hooks/pipelines/") || strings.HasPrefix(p, "/hooks/native/") || strings.HasPrefix(p, "/migrate/pull/") || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/sub/") || strings.HasPrefix(p, "/api/ext/wharf/") || p == "/api/v1/agents/enroll" || p == "/api/v1/agents/connect" || p == "/api/v1/agents/binary" || p == "/api/v1/ca.crt"
 }
 
 func (a *App) entryToken(entry string) string {
@@ -91,7 +91,9 @@ func (a *App) entryToken(entry string) string {
 func (a *App) entryGate(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		entry := a.setting("access.entry")
-		if entry == "" {
+		// before the first administrator exists the one-time setup code is the secret,
+		// so the setup link works even when the installer already set an entry
+		if entry == "" || a.userCount() == 0 {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -106,6 +108,11 @@ func (a *App) entryGate(h http.Handler) http.Handler {
 			return
 		}
 		// Tokens, signed-in sessions and the CA download do not need the entry cookie.
+		// invitation, file-share, desktop-share and proxy-subscription links check their own codes
+		if strings.HasPrefix(r.URL.Path, "/invite/") || strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/v/") || strings.HasPrefix(r.URL.Path, "/sub/") {
+			h.ServeHTTP(w, r)
+			return
+		}
 		if hasBearer(r) || r.URL.Path == "/api/v1/ca.crt" || r.URL.Path == "/mcp" || remoteAgentPath(r.URL.Path) {
 			h.ServeHTTP(w, r)
 			return

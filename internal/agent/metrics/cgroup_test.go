@@ -33,3 +33,11 @@ func TestBerthsAccountForEverything(t *testing.T) {
 		}
 	}
 }
+
+func TestWithVMs(t *testing.T) {
+	bs := []Berth{{Type: "container", ID: "c"}, {Type: "service", ID: "incus.service", MemBytes: 900}, {Type: "kernel", MemBytes: 500}, {Type: "free", MemBytes: 100}}
+	out := withVMs(bs, []Berth{{Type: "vm", Name: "f1", MemBytes: 800, Project: "virtual-machine"}, {Type: "vm", Name: "ct", MemBytes: 200, Project: "container"}})
+	if len(out) != 6 || out[1].MemBytes != 100 || out[2].Name != "f1" || out[3].Name != "ct" || out[4].Type != "kernel" || out[4].MemBytes != 300 || out[5].Type != "free" {
+		t.Fatalf("%+v", out)
+	}
+}

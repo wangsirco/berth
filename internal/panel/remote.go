@@ -384,6 +384,13 @@ func (a *App) handleRDTunnel(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, errs.New(403, "auth.forbidden", "perm", "remote.use"))
 		return
 	}
+	a.rdRelay(w, r, c, secret, false, currentActor(r))
+}
+
+// rdRelay connects a browser websocket to guacd for connection c. readOnly passes the
+// screen only (share links that may watch but not touch).
+func (a *App) rdRelay(w http.ResponseWriter, r *http.Request, c rdConn, secret map[string]string, readOnly bool, ac change.Actor) {
+	id := c.ID
 	q := r.URL.Query()
 	width, _ := strconv.Atoi(q.Get("width"))
 	height, _ := strconv.Atoi(q.Get("height"))
@@ -394,17 +401,23 @@ func (a *App) handleRDTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	conn, rd, cid, err := guac.Handshake(ctx, guacdAddr, guac.Params{Protocol: c.Protocol, Args: guacArgs(c, secret), Width: width, Height: height, DPI: dpi, Timezone: tzName(q.Get("tz"))})
+	args := guacArgs(c, secret)
+	if readOnly {
+		args["read-only"] = "true"
+		args["disable-copy"], args["disable-paste"] = "true", "true"
+		delete(args, "enable-drive")
+	}
+	conn, rd, cid, err := guac.Handshake(ctx, guacdAddr, guac.Params{Protocol: c.Protocol, Args: args, Width: width, Height: height, DPI: dpi, Timezone: tzName(q.Get("tz"))})
 	if err != nil {
 		// tell guacamole-common-js why, as a Guacamole "error" (519 = upstream not found)
 		ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("", "failed")+guac.Encode("error", err.Error(), "519")))
 		ws.Close(websocket.StatusNormalClosure, "")
-		a.pipe.Record(currentActor(r), "local", "rd.open", map[string]any{"id": id, "name": c.Name, "error": err.Error()},
+		a.pipe.Record(ac, "local", "rd.open", map[string]any{"id": id, "name": c.Name, "error": err.Error()},
 			change.Plan{Summary: "plan.rd.open_failed", SummaryP: map[string]any{"name": c.Name, "error": err.Error()}, Risk: change.RiskLow})
 		return
 	}
 	a.db.Exec(`UPDATE rd_connections SET last_used=? WHERE id=?`, time.Now().Unix(), id)
-	a.pipe.Record(currentActor(r), "local", "rd.open", map[string]any{"id": id, "name": c.Name, "target": net.JoinHostPort(c.Host, strconv.Itoa(c.Port))},
+	a.pipe.Record(ac, "local", "rd.open", map[string]any{"id": id, "name": c.Name, "target": net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), "read_only": readOnly},
 		change.Plan{Summary: "plan.rd.open", SummaryP: map[string]any{"name": c.Name, "protocol": c.Protocol}, Risk: change.RiskHigh})
 	guac.Relay(ctx, ws, conn, rd, cid)
 }

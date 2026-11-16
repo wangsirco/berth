@@ -25,7 +25,7 @@ type Tab = 'alerts' | 'uptime' | 'channels' | 'rules'
 
 export default function MonitorPage() {
   const t = useT()
-  const [tab, setTab] = useState<Tab>('alerts')
+  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') as Tab) || 'alerts')
   const { user } = useAuth()
   const tabs: { value: Tab; label: string }[] = [
     { value: 'alerts', label: t('monitor.alerts') },

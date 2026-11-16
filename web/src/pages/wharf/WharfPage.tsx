@@ -10,6 +10,7 @@ import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
 import { WharfPair, WharfPaired, type WharfStatus } from '../network/NetworkPage'
+import { PortCheck } from './PortCheck'
 
 const REPO = 'https://github.com/wangsirco/wharf'
 const INSTALL = 'opkg install /tmp/luci-app-wharf_*.ipk'
@@ -31,6 +32,7 @@ export default function WharfPage() {
           <a href={REPO} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Github className="size-3.5" />GitHub</Button></a>
         </div>
         <WharfPaired st={st.data} reload={() => void st.reload()} />
+        <PortCheck />
       </div>
     )
   }
