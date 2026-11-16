@@ -25,13 +25,13 @@
 set -eu
 
 BASE_URL=${BERTH_URL:-https://github.com/wangsirco/berth/releases}
-YES=1 LOCAL=${BERTH_LOCAL:-} VERSION=latest START=1 SRC=""
+YES=1 LOCAL=${BERTH_LOCAL:-} WANT=${BERTH_VERSION:-latest} START=1 SRC=""  # not VERSION: /etc/os-release sets that
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) YES=1 ;;
     --ask) YES=0 ;;
     --local) LOCAL=$2; shift ;;
-    --version) VERSION=$2; shift ;;
+    --version) WANT=$2; shift ;;
     --no-start) START=0 ;;
     *) echo "未知选项 / unknown option: $1" >&2; exit 2 ;;
   esac
@@ -159,8 +159,8 @@ if [ -n "$LOCAL" ]; then
     for d in "$WORK"/berth_*; do [ -d "$d" ] && SRC=$d && break; done
   fi
 else
-  if [ "$VERSION" = latest ]; then url="$BASE_URL/latest/download"; else url="$BASE_URL/download/v$VERSION"; fi
-  say "正在下载 Berth（$VERSION）" "Downloading Berth ($VERSION)"
+  if [ "$WANT" = latest ]; then url="$BASE_URL/latest/download"; else url="$BASE_URL/download/v${WANT#v}"; fi
+  say "正在下载 Berth（$WANT）" "Downloading Berth ($WANT)"
   curl -fsSL "$url/berth-manifest.json" -o "$WORK/manifest.json" || die "下载不到版本清单：$url" "Cannot download the release manifest from $url"
   name=$(sed -n "s/.*\"name\": *\"\(berth_[^\"]*_linux_$ARCH\.tar\.gz\)\".*/\1/p" "$WORK/manifest.json" | head -n1)
   sum=$(grep -A2 "\"$name\"" "$WORK/manifest.json" | sed -n 's/.*"sha256": *"\([0-9a-f]*\)".*/\1/p' | head -n1)
