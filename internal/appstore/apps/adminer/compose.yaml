@@ -1,0 +1,5 @@
+services:
+  adminer:
+    image: adminer:4.8.1
+    restart: unless-stopped
+    ports: ["127.0.0.1:${HTTP_PORT}:8080"]

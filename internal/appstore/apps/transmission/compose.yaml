@@ -1,0 +1,17 @@
+services:
+  transmission:
+    image: lscr.io/linuxserver/transmission:4.0.6
+    restart: unless-stopped
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      TZ: ${TZ}
+      USER: admin
+      PASS: ${ADMIN_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/config:/config
+      - ${BERTH_DATA}/downloads:/downloads
+    ports:
+      - "127.0.0.1:${HTTP_PORT}:9091"
+      - "${PEER_PORT}:51413"
+      - "${PEER_PORT}:51413/udp"

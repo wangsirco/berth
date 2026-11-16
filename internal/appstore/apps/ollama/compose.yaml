@@ -1,0 +1,7 @@
+services:
+  ollama:
+    image: ollama/ollama:0.12.6
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/models:/root/.ollama
+    ports: ["127.0.0.1:${API_PORT}:11434"]

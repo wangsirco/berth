@@ -1,0 +1,3 @@
+Berth includes code copied from Wharf (https://github.com/wangsirco/wharf), MIT License:
+internal/sign, internal/tlsutil, internal/release, internal/panel/passkey.go (adapted),
+web/src/lib/{api,hooks,format}.ts (adapted), web/src/components/error-boundary.tsx (adapted).

@@ -1,0 +1,17 @@
+{
+  "plugins": [
+    {
+      "id": "iperf3",
+      "version": "1.0.0",
+      "author": "Berth",
+      "name": {"zh-CN": "网速测试（iperf3）", "zh-TW": "網速測試（iperf3）", "en": "Speed test (iperf3)"},
+      "description": {"zh-CN": "用 iperf3 测这台服务器到另一台机器的带宽，结果画成图；也可以开测速服务端。", "en": "Measure bandwidth with iperf3, charted; or run an iperf3 server."},
+      "runtime": "native",
+      "run_as": "plugin",
+      "url": "https://example.com/plugins/iperf3-1.0.0.berthplugin",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "homepage": "https://github.com/wangsirco/berth",
+      "tags": ["network", "tools"]
+    }
+  ]
+}

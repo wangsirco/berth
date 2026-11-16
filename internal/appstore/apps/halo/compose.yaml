@@ -1,0 +1,7 @@
+services:
+  halo:
+    image: halohub/halo:2.21
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/data:/root/.halo2
+    ports: ["127.0.0.1:${HTTP_PORT}:8090"]

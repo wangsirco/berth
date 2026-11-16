@@ -1,0 +1,10 @@
+services:
+  pgadmin:
+    image: dpage/pgadmin4:9
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${ADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/data:/var/lib/pgadmin
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]

@@ -1,0 +1,7 @@
+services:
+  maxkb:
+    image: 1panel/maxkb:v2.10.8-lts
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/data:/opt/maxkb
+    ports: ["127.0.0.1:${HTTP_PORT}:8080"]

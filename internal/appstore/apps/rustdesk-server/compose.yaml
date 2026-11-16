@@ -1,0 +1,20 @@
+services:
+  hbbs:
+    image: rustdesk/rustdesk-server:1.1.14
+    restart: unless-stopped
+    command: ["hbbs"]
+    volumes:
+      - ${BERTH_DATA}/data:/root
+    ports:
+      - "${NAT_PORT}:21115"
+      - "${ID_PORT}:21116"
+      - "${ID_PORT}:21116/udp"
+    depends_on: [hbbr]
+  hbbr:
+    image: rustdesk/rustdesk-server:1.1.14
+    restart: unless-stopped
+    command: ["hbbr"]
+    volumes:
+      - ${BERTH_DATA}/data:/root
+    ports:
+      - "${RELAY_PORT}:21117"

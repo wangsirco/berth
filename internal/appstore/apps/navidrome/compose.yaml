@@ -1,0 +1,8 @@
+services:
+  navidrome:
+    image: deluan/navidrome:0.55.2
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/data:/data
+      - ${BERTH_DATA}/music:/music:ro
+    ports: ["127.0.0.1:${HTTP_PORT}:4533"]

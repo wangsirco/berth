@@ -1,0 +1,22 @@
+# Berth plugin example: the smallest root plugin. Root plugins must be signed, and the
+# person installing one sees a red warning and types its id to confirm.
+api: 1
+id: whoami-root
+name:
+  zh-CN: 我是谁（root 示例）
+  zh-TW: 我是誰（root 範例）
+  en: Who am I (root example)
+version: 1.0.0
+description:
+  zh-CN: 以 root 运行的最小示例插件，页面显示它的用户和这台机器的内核版本。
+  zh-TW: 以 root 執行的最小範例外掛，頁面顯示它的使用者和這台機器的核心版本。
+  en: The smallest plugin that runs as root; its page shows its user and the kernel version.
+author: Berth
+runtime:
+  type: native
+  binary:
+    arm64: bin/whoami-arm64
+    amd64: bin/whoami-amd64
+  page: true
+  run_as: root
+  mem_mb: 64

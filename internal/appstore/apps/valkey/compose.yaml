@@ -1,0 +1,8 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ${BERTH_DATA}/data:/data
+    ports: ["127.0.0.1:${REDIS_PORT}:6379"]

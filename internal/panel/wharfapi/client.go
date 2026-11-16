@@ -1,0 +1,331 @@
+// Package wharfapi talks to a paired Wharf router panel (docs/wharf-berth-extension.md):
+// every request carries the pairing token and an HMAC signature, and TLS is pinned to the
+// fingerprint recorded at pairing (both sides may use local CAs).
+package wharfapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/wangsirco/berth/internal/sign"
+)
+
+// Prefix is the API root on Wharf.
+const Prefix = "/api/ext/berth/v1"
+
+// Error is Wharf's answer to a failed request ({"error": "…"}, already in Chinese).
+type Error struct {
+	Status  int
+	Message string
+}
+
+func (e *Error) Error() string { return fmt.Sprintf("wharf %d: %s", e.Status, e.Message) }
+
+// IsStatus reports whether err is a Wharf error with this HTTP status.
+func IsStatus(err error, status int) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Status == status
+}
+
+// Fingerprint is the SHA-256 of a certificate (hex).
+func Fingerprint(c *x509.Certificate) string {
+	h := sha256.Sum256(c.Raw)
+	return hex.EncodeToString(h[:])
+}
+
+// pinned accepts a chain when any certificate in it matches fp (Wharf's local CA stays the
+// same when its leaf certificate is renewed).
+func pinned(fp string) *tls.Config {
+	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12,
+		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
+			for _, b := range raw {
+				h := sha256.Sum256(b)
+				if strings.EqualFold(hex.EncodeToString(h[:]), fp) {
+					return nil
+				}
+			}
+			return errors.New("wharf certificate does not match the paired fingerprint")
+		}}
+}
+
+func httpClient(fp string) *http.Client {
+	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: pinned(fp),
+		DialContext: (&net.Dialer{Timeout: 8 * time.Second}).DialContext}}
+}
+
+// Chain connects once (without trusting anything) and returns the certificates Wharf
+// presents, so a person can confirm the fingerprint before pairing.
+func Chain(ctx context.Context, base string) ([]CertInfo, error) {
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return nil, errors.New("Wharf address must be https://host[:port]")
+	}
+	host := u.Host
+	if u.Port() == "" {
+		host += ":443"
+	}
+	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 8 * time.Second}, Config: &tls.Config{InsecureSkipVerify: true}}
+	conn, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	var out []CertInfo
+	for _, c := range conn.(*tls.Conn).ConnectionState().PeerCertificates {
+		out = append(out, CertInfo{Subject: c.Subject.CommonName, Issuer: c.Issuer.CommonName, CA: c.IsCA, FP: Fingerprint(c), NotAfter: c.NotAfter.Unix()})
+	}
+	return out, nil
+}
+
+type CertInfo struct {
+	Subject  string `json:"subject"`
+	Issuer   string `json:"issuer"`
+	CA       bool   `json:"ca"`
+	FP       string `json:"fp"`
+	NotAfter int64  `json:"not_after"`
+}
+
+// ---- pairing ----
+
+// ExchangeRequest is what Berth sends with the one-time code (no token yet).
+type ExchangeRequest struct {
+	Code       string `json:"code"`
+	BerthToken string `json:"berth_token"` // the berth_wrf_ token Wharf will use to call Berth
+	BerthName  string `json:"berth_name"`
+	BerthURL   string `json:"berth_url"`
+	BerthFP    string `json:"berth_fp"`
+}
+
+type ExchangeResult struct {
+	Token     string   `json:"token"` // wharf_bth_…
+	Scopes    []string `json:"scopes"`
+	WharfName string   `json:"wharf_name"`
+	ExpiresAt int64    `json:"expires_at,omitempty"` // 0 = never
+	TargetIPs []string `json:"target_ips"`           // devices Berth may point forwards at
+}
+
+// Exchange trades the one-time code for the pairing token (server to server, pinned).
+func Exchange(ctx context.Context, base, fp string, in ExchangeRequest) (ExchangeResult, error) {
+	var out ExchangeResult
+	b, _ := json.Marshal(in)
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(base, "/")+Prefix+"/pair/exchange", bytes.NewReader(b))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return out, finish(httpClient(fp), req, &out)
+}
+
+// ---- client ----
+
+type Client struct {
+	Base  string
+	Token string
+	hc    *http.Client
+}
+
+func New(base, fp, token string) *Client {
+	return &Client{Base: strings.TrimRight(base, "/"), Token: token, hc: httpClient(fp)}
+}
+
+// Do sends one signed request; actor (e.g. "王 · 新建站点 vault.example.net") goes into
+// Wharf's audit summary.
+func (c *Client) Do(ctx context.Context, method, path, actor string, in, out any) error {
+	var body []byte
+	if in != nil {
+		body, _ = json.Marshal(in)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.Base+Prefix+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if actor != "" {
+		req.Header.Set("X-Berth-Actor", url.QueryEscape(actor))
+	}
+	sign.SignPrefixed(req, "X-Berth", sign.DeriveKey(c.Token), body)
+	return finish(c.hc, req, out)
+}
+
+func finish(hc *http.Client, req *http.Request, out any) error {
+	resp, err := hc.Do(req)
+	if err != nil {
+		return &Error{Status: 0, Message: err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode >= 300 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		json.Unmarshal(raw, &e)
+		if e.Error == "" {
+			e.Error = strings.TrimSpace(string(raw))
+		}
+		return &Error{Status: resp.StatusCode, Message: e.Error}
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// ---- typed calls ----
+
+// Forward is a Wharf port mapping (§4.1).
+type Forward struct {
+	ID             string   `json:"id,omitempty"`
+	Name           string   `json:"name"`
+	Proto          string   `json:"proto"`
+	WANPort        string   `json:"wan_port"`
+	TargetIP       string   `json:"target_ip"`
+	TargetPort     string   `json:"target_port"`
+	Mode           string   `json:"mode,omitempty"` // "" | restrict
+	AllowCountries []string `json:"allow_countries,omitempty"`
+	BerthRef       string   `json:"berth_ref,omitempty"`
+	BerthHost      string   `json:"berth_host,omitempty"`
+	Note           string   `json:"note,omitempty"`
+	Kind           string   `json:"kind,omitempty"` // berth for Berth's own
+}
+
+func (c *Client) Forwards(ctx context.Context) ([]Forward, error) {
+	var out []Forward
+	return out, c.Do(ctx, "GET", "/forwards", "", nil, &out)
+}
+
+// PlanForward asks what creating f would change (and whether it conflicts).
+func (c *Client) PlanForward(ctx context.Context, f Forward) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.Do(ctx, "POST", "/forwards?plan=1", "", f, &out)
+}
+
+func (c *Client) CreateForward(ctx context.Context, actor string, f Forward) (Forward, error) {
+	var out Forward
+	return out, c.Do(ctx, "POST", "/forwards", actor, f, &out)
+}
+
+func (c *Client) DeleteForward(ctx context.Context, actor, id string) error {
+	err := c.Do(ctx, "DELETE", "/forwards/"+url.PathEscape(id), actor, nil, nil)
+	if IsStatus(err, 404) {
+		return nil // already gone
+	}
+	return err
+}
+
+// SNI is Berth's registration with Wharf's proxy-front (§4.2).
+type SNI struct {
+	Target        string   `json:"target"`
+	Domains       []string `json:"domains"`
+	ProxyProtocol bool     `json:"proxy_protocol"`
+}
+
+func (c *Client) SetSNI(ctx context.Context, actor string, s SNI) error {
+	return c.Do(ctx, "PUT", "/sni", actor, s, nil)
+}
+
+func (c *Client) GetSNI(ctx context.Context) (SNI, error) {
+	var s SNI
+	return s, c.Do(ctx, "GET", "/sni", "", nil, &s)
+}
+
+type DDNS struct {
+	ID      string `json:"id"`
+	Domain  string `json:"domain"`
+	Owner   string `json:"owner"`
+	IP      string `json:"ip,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Updated int64  `json:"updated_at,omitempty"`
+}
+
+func (c *Client) DDNS(ctx context.Context) ([]DDNS, error) {
+	var out []DDNS
+	return out, c.Do(ctx, "GET", "/ddns", "", nil, &out)
+}
+
+func (c *Client) ClaimDDNS(ctx context.Context, actor, domain, owner string) error {
+	return c.Do(ctx, "POST", "/ddns/claim", actor, map[string]string{"domain": domain, "owner": owner}, nil)
+}
+
+type Device struct {
+	Name   string `json:"name"`
+	IP     string `json:"ip"`
+	MAC    string `json:"mac,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Online bool   `json:"online"`
+}
+
+func (c *Client) Devices(ctx context.Context) ([]Device, error) {
+	var out []Device
+	return out, c.Do(ctx, "GET", "/devices", "", nil, &out)
+}
+
+// HostView: the router's view of a Berth host (traffic and inbound).
+func (c *Client) HostView(ctx context.Context, ip, what, rng string) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.Do(ctx, "GET", "/hosts/"+url.PathEscape(ip)+"/"+what+"?range="+url.QueryEscape(rng), "", nil, &out)
+}
+
+type Ban struct {
+	ID        string `json:"id,omitempty"`
+	CIDR      string `json:"cidr"`
+	Reason    string `json:"reason,omitempty"`
+	Source    string `json:"source,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339; empty = permanent
+}
+
+func (c *Client) PushBan(ctx context.Context, actor string, b Ban) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	err := c.Do(ctx, "POST", "/bans", actor, b, &out)
+	return out.ID, err
+}
+
+func (c *Client) WithdrawBan(ctx context.Context, actor, id string) error {
+	err := c.Do(ctx, "DELETE", "/bans/"+url.PathEscape(id), actor, nil, nil)
+	if IsStatus(err, 404) {
+		return nil
+	}
+	return err
+}
+
+type Alert struct {
+	Level     string `json:"level"` // info | warn | critical
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Link      string `json:"link,omitempty"`
+	DedupeKey string `json:"dedupe_key,omitempty"`
+}
+
+func (c *Client) Alert(ctx context.Context, a Alert) error {
+	return c.Do(ctx, "POST", "/alerts", "", a, nil)
+}
+
+// Ticket asks Wharf for a one-time sign-in link for a Berth user (§4.7).
+func (c *Client) Ticket(ctx context.Context, berthUser, returnTo string) (string, error) {
+	var out struct {
+		URL string `json:"url"`
+	}
+	err := c.Do(ctx, "POST", "/sso/ticket", "", map[string]string{"berth_user": berthUser, "return_to": returnTo}, &out)
+	return out.URL, err
+}
+
+// Unpair tells Wharf the link is gone; keep says whether Berth-made forwards stay (as
+// ordinary forwards) or are deleted.
+func (c *Client) Unpair(ctx context.Context, keep bool) error {
+	return c.Do(ctx, "DELETE", "/pair?keep="+fmt.Sprint(keep), "", nil, nil)
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=Berth panel
+After=network-online.target berth-agent.service
+Wants=berth-agent.service
+
+[Service]
+User=berth
+Group=berth
+ExecStart=/usr/local/bin/berth-panel
+StateDirectory=berth
+Restart=always
+RestartSec=2
+MemoryHigh=56M
+MemoryMax=128M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/berth
+ProtectHome=yes
+PrivateTmp=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

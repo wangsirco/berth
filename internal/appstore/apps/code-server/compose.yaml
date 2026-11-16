@@ -1,0 +1,12 @@
+services:
+  code-server:
+    image: lscr.io/linuxserver/code-server:4.99.4
+    restart: unless-stopped
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      TZ: ${TZ}
+      PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/config:/config
+    ports: ["127.0.0.1:${HTTP_PORT}:8443"]

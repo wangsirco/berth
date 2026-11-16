@@ -1,0 +1,15 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.5
+    restart: unless-stopped
+    user: "0:0"  # the image's own user cannot write a bind-mounted data folder
+    environment:
+      RUSTFS_ACCESS_KEY: admin
+      RUSTFS_SECRET_KEY: ${ADMIN_PASSWORD}
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_VOLUMES: /data
+    volumes:
+      - ${BERTH_DATA}/data:/data
+    ports:
+      - "127.0.0.1:${S3_PORT}:9000"
+      - "127.0.0.1:${HTTP_PORT}:9001"

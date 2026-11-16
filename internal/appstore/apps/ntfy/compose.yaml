@@ -1,0 +1,9 @@
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    restart: unless-stopped
+    command: ["serve"]
+    volumes:
+      - ${BERTH_DATA}/cache:/var/cache/ntfy
+      - ${BERTH_DATA}/etc:/etc/ntfy
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]

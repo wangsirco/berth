@@ -1,0 +1,9 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.10.7
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/config:/config
+      - ${BERTH_DATA}/cache:/cache
+      - ${BERTH_DATA}/media:/media
+    ports: ["127.0.0.1:${HTTP_PORT}:8096"]

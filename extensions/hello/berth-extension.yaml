@@ -1,0 +1,23 @@
+# A sample Berth extension (方案 §9). It shows the host's containers, can restart one, and
+# keeps the last events Berth sent it. Install it from Settings → Extensions with the path
+# of this directory on the server.
+id: hello
+name:
+  zh-CN: 你好扩展
+  zh-TW: 你好擴充
+  en: Hello extension
+version: 1.0.0
+description:
+  zh-CN: 示例扩展：列出容器、重启容器、接收事件。
+  zh-TW: 範例擴充：列出容器、重新啟動容器、接收事件。
+  en: "Sample: lists containers, restarts one, receives events."
+build: .          # or image: ghcr.io/you/hello:1.0.0
+port: 8080        # where the page and the webhook listen inside the container
+permissions:      # Berth API scopes it asks for (the installer may grant fewer)
+  - containers:read
+  - containers:write
+  - sites:write
+events:           # delivered as POST {type, data} to the webhook
+  - change.done
+  - alert
+webhook: /hooks/berth

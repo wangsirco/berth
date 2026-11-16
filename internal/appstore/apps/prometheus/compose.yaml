@@ -1,0 +1,8 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    user: "0"
+    volumes:
+      - ${BERTH_DATA}/data:/prometheus
+    ports: ["127.0.0.1:${HTTP_PORT}:9090"]

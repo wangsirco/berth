@@ -1,0 +1,14 @@
+.DS_Store
+node_modules/
+
+/bin/
+*.db
+*.db-wal
+*.db-shm
+.env
+.superpowers/
+web/dist/*
+!web/dist/.gitkeep
+/dist-release/
+/test/e2e/out/
+.claude/settings.local.json

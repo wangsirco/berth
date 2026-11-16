@@ -1,0 +1,19 @@
+services:
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.15
+    restart: unless-stopped
+    depends_on: [redis]
+    environment:
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_ADMIN_USER: admin
+      PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      PAPERLESS_OCR_LANGUAGE: ${OCR_LANG}
+      PAPERLESS_OCR_LANGUAGES: "chi-sim chi-tra"
+    volumes:
+      - ${BERTH_DATA}/data:/usr/src/paperless/data
+      - ${BERTH_DATA}/media:/usr/src/paperless/media
+      - ${BERTH_DATA}/consume:/usr/src/paperless/consume
+    ports: ["127.0.0.1:${HTTP_PORT}:8000"]
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped

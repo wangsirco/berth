@@ -1,0 +1,11 @@
+services:
+  syncthing:
+    image: syncthing/syncthing:1.29
+    restart: unless-stopped
+    environment: { PUID: "${PUID}", PGID: "${PGID}" }
+    volumes:
+      - ${BERTH_DATA}/data:/var/syncthing
+    ports:
+      - "127.0.0.1:${HTTP_PORT}:8384"
+      - "${SYNC_PORT}:22000/tcp"
+      - "${SYNC_PORT}:22000/udp"

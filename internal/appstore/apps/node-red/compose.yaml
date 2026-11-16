@@ -1,0 +1,7 @@
+services:
+  node-red:
+    image: nodered/node-red:4.0
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/data:/data
+    ports: ["127.0.0.1:${HTTP_PORT}:1880"]

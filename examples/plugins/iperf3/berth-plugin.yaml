@@ -1,0 +1,35 @@
+# Berth plugin example: iperf3 with a page — test the bandwidth to another machine, or let
+# others test against this server. Build with `make`, pack with `berth plugin pack .`.
+api: 1
+id: iperf3
+name:
+  zh-CN: 网速测试（iperf3）
+  zh-TW: 網速測試（iperf3）
+  en: Speed test (iperf3)
+version: 1.0.0
+description:
+  zh-CN: 用 iperf3 测这台服务器到另一台机器的带宽，结果画成图；也可以开一个测速服务端，让别人来测这台。
+  zh-TW: 用 iperf3 測這台伺服器到另一台機器的頻寬，結果畫成圖；也可以開一個測速服務端，讓別人來測這台。
+  en: Measure bandwidth from this server to another machine with iperf3, charted; or run an iperf3 server so others can test this one.
+author: Berth
+homepage: https://github.com/wangsirco/berth
+icon: icon.svg
+runtime:
+  type: native
+  binary:
+    arm64: bin/iperf3-arm64
+    amd64: bin/iperf3-amd64
+  page: true
+  run_as: plugin
+  mem_mb: 128
+system:
+  packages: [iperf3]
+  listen: [5201]
+  firewall_open: true
+permissions: []
+settings:
+  - key: server_port
+    label: {zh-CN: 服务端端口, zh-TW: 服務端連接埠, en: Server port}
+    hint: {zh-CN: 别人测这台时连的端口, zh-TW: 別人測這台時連的連接埠, en: The port others connect to}
+    type: number
+    default: "5201"

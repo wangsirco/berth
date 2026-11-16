@@ -1,0 +1,28 @@
+services:
+  bookstack:
+    image: lscr.io/linuxserver/bookstack:version-v25.05
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      APP_URL: ${APP_URL}
+      APP_KEY: ${APP_KEY}
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USERNAME: bookstack
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: bookstack
+    volumes:
+      - ${BERTH_DATA}/config:/config
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: bookstack
+      MARIADB_USER: bookstack
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/db:/var/lib/mysql

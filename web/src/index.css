@@ -1,0 +1,42 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-500.css";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "PingFang TC", "Segoe UI", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --radius-box: 12px;
+  --radius-dialog: 12px;
+  --color-fg: var(--fg); --color-mute: var(--mute); --color-line: var(--line); --color-soft: var(--soft);
+  --color-tint: var(--tint); --color-canvas: var(--canvas); --color-card: var(--card); --color-acc: var(--acc); --color-acc-2: var(--acc-2);
+  --color-acc-fg: var(--acc-fg); --color-ok: var(--ok); --color-warn: var(--warn); --color-bad: var(--bad);
+  --color-term: var(--term); --color-term-fg: var(--term-fg);
+}
+
+:root {
+  --canvas: #f7f5f0; --card: #fffdf9; --fg: #26251f; --mute: #6f6b62; --line: #e3ded2; --soft: #f1eee6; --tint: #e2efe8;
+  --acc: #1f6f5c; --acc-2: #2a8a72; --acc-fg: #ffffff; --ok: #237a52; --warn: #8f560a; --bad: #b9441d;
+  --term: #1f2328; --term-fg: #d1d9e0;
+  /* 泊位条：按类型的色值，亮色 */
+  --berth-pipeline: #0b6e66; --berth-vm: #3b5b8c; --berth-app: #2b8a7e; --berth-app-2: #5aa89c; --berth-app-3: #8fc5bc;
+  --berth-sys: #77736a; --berth-free-a: #fffdf9; --berth-free-b: #f1eee6;
+  --logo-boat-1: #0b6e66; --logo-boat-2: #2b8a7e; --logo-boat-3: #3b5b8c; --logo-quay: #1f6f5c;
+  color-scheme: light;
+}
+.dark {
+  --canvas: #171714; --card: #22211d; --fg: #ecebe5; --mute: #a19d92; --line: #36342e; --soft: #1d1c19; --tint: #1d3a31;
+  --acc: #5cc1a3; --acc-2: #71cdb1; --acc-fg: #0e2a22; --ok: #5cc18f; --warn: #e1a54a; --bad: #ec8b66;
+  --term: #010409; --term-fg: #d1d9e0;
+  --berth-pipeline: #2bb3a6; --berth-vm: #6e93cf; --berth-app: #2a8f84; --berth-app-2: #23706a; --berth-app-3: #1b5650;
+  --berth-sys: #5a574f; --berth-free-a: #171714; --berth-free-b: #22211d;
+  --logo-boat-1: #2bb3a6; --logo-boat-2: #2a8f84; --logo-boat-3: #6e93cf; --logo-quay: #5cc1a3;
+  color-scheme: dark;
+}
+html, body, #root { height: 100%; }
+html { scroll-padding-bottom: 44px; } /* keep things scrolled into view clear of the fixed status bar */
+body { margin: 0; background: var(--canvas); color: var(--fg); font-family: var(--font-sans); font-size: 14px; -webkit-font-smoothing: antialiased; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@keyframes berth-pulse { 50% { opacity: .45; } }

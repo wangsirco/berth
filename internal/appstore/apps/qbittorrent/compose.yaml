@@ -1,0 +1,16 @@
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.1.0
+    restart: unless-stopped
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      TZ: ${TZ}
+      WEBUI_PORT: "8080"
+    volumes:
+      - ${BERTH_DATA}/config:/config
+      - ${BERTH_DATA}/downloads:/downloads
+    ports:
+      - "127.0.0.1:${HTTP_PORT}:8080"
+      - "${PEER_PORT}:6881"
+      - "${PEER_PORT}:6881/udp"

@@ -1,0 +1,10 @@
+services:
+  grafana:
+    image: grafana/grafana:12.0.0
+    restart: unless-stopped
+    user: "0"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/data:/var/lib/grafana
+    ports: ["127.0.0.1:${HTTP_PORT}:3000"]

@@ -1,0 +1,8 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ${BERTH_DATA}/data:/data
+    ports: ["127.0.0.1:${REDIS_PORT}:6379"]

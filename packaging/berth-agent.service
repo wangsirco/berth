@@ -1,0 +1,16 @@
+[Unit]
+Description=Berth agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/berth agent
+RuntimeDirectory=berth
+RuntimeDirectoryMode=0750
+Restart=always
+RestartSec=2
+MemoryHigh=48M
+MemoryMax=96M
+
+[Install]
+WantedBy=multi-user.target

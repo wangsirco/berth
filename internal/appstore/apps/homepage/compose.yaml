@@ -1,0 +1,9 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v2.8.0
+    restart: unless-stopped
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+    volumes:
+      - ${BERTH_DATA}/config:/app/config
+    ports: ["127.0.0.1:${HTTP_PORT}:3000"]

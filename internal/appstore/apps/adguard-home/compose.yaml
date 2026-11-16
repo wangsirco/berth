@@ -1,0 +1,11 @@
+services:
+  adguard:
+    image: adguard/adguardhome:v0.107.61
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/work:/opt/adguardhome/work
+      - ${BERTH_DATA}/conf:/opt/adguardhome/conf
+    ports:
+      - "127.0.0.1:${HTTP_PORT}:3000"
+      - "${DNS_PORT}:53/tcp"
+      - "${DNS_PORT}:53/udp"

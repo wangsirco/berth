@@ -1,0 +1,10 @@
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.33.2
+    restart: unless-stopped
+    environment:
+      SIGNUPS_ALLOWED: "${SIGNUPS}"
+      ADMIN_TOKEN: ${ADMIN_PASSWORD}
+    volumes:
+      - ${BERTH_DATA}/data:/data
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]

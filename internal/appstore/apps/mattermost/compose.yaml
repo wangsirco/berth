@@ -1,0 +1,24 @@
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:10.8
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mattermost:${DB_PASSWORD}@db:5432/mattermost?sslmode=disable
+      MM_SERVICESETTINGS_SITEURL: ${SITE_URL}
+    volumes:
+      - ${BERTH_DATA}/config:/mattermost/config
+      - ${BERTH_DATA}/data:/mattermost/data
+      - ${BERTH_DATA}/logs:/mattermost/logs
+      - ${BERTH_DATA}/plugins:/mattermost/plugins
+    ports: ["127.0.0.1:${HTTP_PORT}:8065"]
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mattermost
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: mattermost
+    volumes:
+      - ${BERTH_DATA}/db:/var/lib/postgresql/data

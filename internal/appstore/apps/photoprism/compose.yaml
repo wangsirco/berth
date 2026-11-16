@@ -1,0 +1,13 @@
+services:
+  photoprism:
+    image: photoprism/photoprism:250426
+    restart: unless-stopped
+    environment:
+      PHOTOPRISM_ADMIN_USER: admin
+      PHOTOPRISM_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      PHOTOPRISM_DATABASE_DRIVER: sqlite
+      PHOTOPRISM_SITE_URL: http://localhost:${HTTP_PORT}/
+    volumes:
+      - ${BERTH_DATA}/storage:/photoprism/storage
+      - ${BERTH_DATA}/originals:/photoprism/originals
+    ports: ["127.0.0.1:${HTTP_PORT}:2342"]

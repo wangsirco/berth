@@ -1,0 +1,1 @@
+{"name":"berth-e2e","private":true,"type":"module","scripts":{"test":"node run.mjs"},"dependencies":{"pixelmatch":"^8.0.0","pngjs":"^7.0.0","puppeteer-core":"^25.17.0"}}

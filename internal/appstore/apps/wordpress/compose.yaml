@@ -1,0 +1,23 @@
+services:
+  wordpress:
+    image: wordpress:6.8-php8.3-apache
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - ${BERTH_DATA}/html:/var/www/html
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]
+    depends_on: [db]
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - ${BERTH_DATA}/db:/var/lib/mysql

@@ -1,0 +1,7 @@
+services:
+  lobe-chat:
+    image: lobehub/lobe-chat:1.143.3
+    restart: unless-stopped
+    environment:
+      ACCESS_CODE: ${ADMIN_PASSWORD}
+    ports: ["127.0.0.1:${HTTP_PORT}:3210"]

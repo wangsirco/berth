@@ -1,0 +1,7 @@
+services:
+  qinglong:
+    image: whyour/qinglong:2.24.0
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/data:/ql/data
+    ports: ["127.0.0.1:${HTTP_PORT}:5700"]

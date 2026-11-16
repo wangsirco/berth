@@ -1,0 +1,8 @@
+services:
+  home-assistant:
+    image: ghcr.io/home-assistant/home-assistant:2025.5
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    ports: ["127.0.0.1:${HTTP_PORT}:8123"]

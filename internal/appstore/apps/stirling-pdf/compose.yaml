@@ -1,0 +1,7 @@
+services:
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:0.46.2
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/configs:/configs
+    ports: ["127.0.0.1:${HTTP_PORT}:8080"]

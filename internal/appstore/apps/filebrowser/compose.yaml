@@ -1,0 +1,9 @@
+services:
+  filebrowser:
+    image: filebrowser/filebrowser:v2.32.0
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/files:/srv
+      - ${BERTH_DATA}/config:/config
+      - ${BERTH_DATA}/database:/database
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]

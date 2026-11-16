@@ -1,0 +1,10 @@
+services:
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:2.21.0
+    restart: unless-stopped
+    volumes:
+      - ${BERTH_DATA}/config:/config
+      - ${BERTH_DATA}/metadata:/metadata
+      - ${BERTH_DATA}/audiobooks:/audiobooks
+      - ${BERTH_DATA}/podcasts:/podcasts
+    ports: ["127.0.0.1:${HTTP_PORT}:80"]

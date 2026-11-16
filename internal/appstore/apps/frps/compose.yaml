@@ -1,0 +1,11 @@
+services:
+  frps:
+    image: snowdreamtech/frps:0.72.0-alpine
+    restart: unless-stopped
+    entrypoint: ["frps"]  # the image's own entrypoint ignores arguments and wants a config file
+    command: ["--bind-port", "7000", "--token", "${FRP_TOKEN}", "--allow-ports", "${PROXY_PORTS}",
+              "--dashboard-addr", "0.0.0.0", "--dashboard-port", "7500", "--dashboard-user", "admin", "--dashboard-pwd", "${ADMIN_PASSWORD}"]
+    ports:
+      - "${BIND_PORT}:7000"
+      - "${PROXY_PORTS}:${PROXY_PORTS}"
+      - "127.0.0.1:${HTTP_PORT}:7500"
