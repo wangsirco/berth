@@ -252,6 +252,7 @@ func DBNativeInstall(ctx context.Context, engine, version, password string, log 
 			return res, errs.New(409, "dbn.datadir_other", "dir", p.dataDir, "engine", was)
 		}
 	}
+	defer TempSwap(ctx, log)()
 	name, args := "dnf", append([]string{"-y", "-q", "install"}, p.pkgs...)
 	if debianLike() {
 		name, args = "apt-get", append([]string{"-y", "-q", "install"}, p.pkgs...)

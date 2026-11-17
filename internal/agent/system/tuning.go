@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const (
@@ -258,11 +260,20 @@ func SetSwapFile(ctx context.Context, mb int, log func(string)) error {
 	if mb == 0 {
 		return nil
 	}
-	dir := filepath.Dir(berthSwap)
+	if err := makeSwap(ctx, berthSwap, mb, log); err != nil {
+		return err
+	}
+	fstabSwap(true)
+	return nil
+}
+
+// makeSwap creates and turns on a swap file at path (btrfs needs its own way, and its own
+// subvolume so snapshots of /var leave it out).
+func makeSwap(ctx context.Context, path string, mb int, log func(string)) error {
+	dir := filepath.Dir(path)
 	if _, err := os.Stat(dir); err != nil {
 		fs, _ := run(ctx, "findmnt", "-no", "FSTYPE", "-T", "/var")
 		if fs == "btrfs" {
-			// its own subvolume, so snapshots of /var do not include it
 			if out, err := run(ctx, "btrfs", "subvolume", "create", dir); err != nil {
 				return errors.New(out)
 			}
@@ -273,29 +284,80 @@ func SetSwapFile(ctx context.Context, mb int, log func(string)) error {
 	fs, _ := run(ctx, "findmnt", "-no", "FSTYPE", "-T", dir)
 	size := strconv.Itoa(mb) + "m"
 	if fs == "btrfs" {
-		log("btrfs filesystem mkswapfile --size " + size + " " + berthSwap)
-		if out, err := run(ctx, "btrfs", "filesystem", "mkswapfile", "--size", size, berthSwap); err != nil {
+		log("btrfs filesystem mkswapfile --size " + size + " " + path)
+		if out, err := run(ctx, "btrfs", "filesystem", "mkswapfile", "--size", size, path); err != nil {
 			return errors.New(out)
 		}
 	} else {
-		log("fallocate -l " + size + " " + berthSwap + " && mkswap")
-		if out, err := run(ctx, "fallocate", "-l", strconv.Itoa(mb)+"MiB", berthSwap); err != nil {
+		log("fallocate -l " + size + " " + path + " && mkswap")
+		if out, err := run(ctx, "fallocate", "-l", strconv.Itoa(mb)+"MiB", path); err != nil {
 			return errors.New(out)
 		}
-		os.Chmod(berthSwap, 0o600)
-		if out, err := run(ctx, "mkswap", berthSwap); err != nil {
-			os.Remove(berthSwap)
+		os.Chmod(path, 0o600)
+		if out, err := run(ctx, "mkswap", path); err != nil {
+			os.Remove(path)
 			return errors.New(out)
 		}
 	}
-	run(ctx, "restorecon", berthSwap)
-	log("swapon " + berthSwap)
-	if out, err := run(ctx, "swapon", "-p", "5", berthSwap); err != nil {
-		os.Remove(berthSwap)
+	run(ctx, "restorecon", path)
+	log("swapon " + path)
+	if out, err := run(ctx, "swapon", "-p", "5", path); err != nil {
+		os.Remove(path)
 		return errors.New(out)
 	}
-	fstabSwap(true)
 	return nil
+}
+
+// installSwap lives only while packages are installed on a small machine (never in fstab).
+const installSwap = "/var/swap/berth-install.swap"
+
+// TempSwap: on a machine with little memory and (almost) no swap, dnf and apt get killed by
+// the kernel halfway (dnf alone wants a few hundred MB for the repository metadata). For the
+// duration of an install, add a swap file; the returned func removes it. It does nothing on
+// machines with enough memory or swap, or too little disk.
+func TempSwap(ctx context.Context, log func(string)) func() {
+	if _, err := os.Stat(installSwap); err == nil { // left over from an install that was cut off
+		run(ctx, "swapoff", installSwap)
+		os.Remove(installSwap)
+	}
+	st := GetSwap(ctx)
+	var swap int64
+	for _, d := range st.Devices {
+		swap += d.Size
+	}
+	if st.MemMB == 0 || st.MemMB >= 1536 || swap >= 1<<30 {
+		return func() {}
+	}
+	mb := 1024
+	if st.MemMB < 768 {
+		mb = 2048
+	}
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs("/var", &fs); err != nil || int64(fs.Bavail)*int64(fs.Bsize) < int64(mb+2048)<<20 {
+		log(fmt.Sprintf("内存只有 %d MB 且几乎没有 swap，硬盘空间也不够加临时 swap：安装可能因内存不足被系统终止 / only %d MB of memory, almost no swap and too little disk for a temporary one: the install may be killed for lack of memory", st.MemMB, st.MemMB))
+		return func() {}
+	}
+	log(fmt.Sprintf("内存只有 %d MB、几乎没有 swap：安装期间临时加 %d MB swap（装完自动删除），会慢一些但不会因为内存不足失败 / only %d MB of memory and almost no swap: adding %d MB of temporary swap for the install (removed afterwards)", st.MemMB, mb, st.MemMB, mb))
+	if err := makeSwap(ctx, installSwap, mb, log); err != nil {
+		log("临时 swap 没加上 / could not add the temporary swap: " + err.Error())
+		return func() {}
+	}
+	return func() {
+		c, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		run(c, "swapoff", installSwap)
+		os.Remove(installSwap)
+		log("已删除临时 swap / temporary swap removed")
+	}
+}
+
+// Killed explains a package manager the kernel killed (out of memory) in words.
+func Killed(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "signal: killed") {
+		return err
+	}
+	st := GetSwap(context.Background())
+	return fmt.Errorf("内存不足，安装进程被系统终止（这台机器共 %d MB 内存）。可以在「系统 → 内核与内存」加一个 swap 文件后重试 / out of memory: the installer was killed (%d MB of memory); add a swap file under System → Kernel & memory and try again", st.MemMB, st.MemMB)
 }
 
 // fstabSwap adds or removes Berth's swap line in /etc/fstab (other lines are left as they are).

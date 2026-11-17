@@ -247,6 +247,7 @@ func PHPInstall(ctx context.Context, v string, exts []string, log func(string)) 
 	} else {
 		name, args = "dnf", append([]string{"-y", "-q", "install"}, pk...)
 	}
+	defer TempSwap(ctx, log)()
 	log("$ " + name + " install " + strings.Join(pk, " "))
 	n, a := sysexec.Wrap(name, args...)
 	cmd := exec.CommandContext(ctx, n, a...)

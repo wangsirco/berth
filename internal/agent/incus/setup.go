@@ -3,6 +3,7 @@ package incus
 import (
 	"bytes"
 	"context"
+	"github.com/wangsirco/berth/internal/agent/system"
 	"github.com/wangsirco/berth/internal/sysexec"
 	"os"
 	"os/exec"
@@ -128,6 +129,7 @@ func (c *Client) Install(ctx context.Context, log func(string)) error {
 	if !has("dnf") {
 		return &Error{Status: 409, Message: "no dnf on this host"}
 	}
+	defer system.TempSwap(ctx, log)()
 	if err := step("dnf", append([]string{"-y", "-q", "install"}, Packages...)...); err != nil {
 		return err
 	}

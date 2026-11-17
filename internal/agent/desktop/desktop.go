@@ -9,6 +9,7 @@ import (
 	"crypto/des"
 	"errors"
 	"fmt"
+	"github.com/wangsirco/berth/internal/agent/system"
 	"github.com/wangsirco/berth/internal/sysexec"
 	"os"
 	"os/exec"
@@ -118,7 +119,7 @@ func step(ctx context.Context, log func(string), name string, args ...string) er
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("%s: %v", name, err)
+		return system.Killed(fmt.Errorf("%s: %v", name, err))
 	}
 	return nil
 }
@@ -133,6 +134,7 @@ func Install(ctx context.Context, items []string, log func(string)) error {
 	if !validItems(items) {
 		return errors.New("unknown software item")
 	}
+	defer system.TempSwap(ctx, log)() // small machines: dnf / apt would be killed for lack of memory
 	mgr, base := packages(ctx)
 	type group struct {
 		name string

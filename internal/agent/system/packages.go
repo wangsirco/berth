@@ -312,6 +312,9 @@ func ApplyPackages(ctx context.Context, names []string, remove bool, log func(st
 	case has("apt-get"):
 		name, args = "env", append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "-y", "-o", "Dpkg::Options::=--force-confold", verb}, names...)
 	}
+	if !remove {
+		defer TempSwap(ctx, log)()
+	}
 	log("$ " + name + " " + strings.Join(args, " "))
 	out, err := run(ctx, name, args...)
 	n := 0
@@ -322,6 +325,9 @@ func ApplyPackages(ctx context.Context, names []string, remove bool, log func(st
 		}
 	}
 	if err != nil {
+		if k := Killed(err); k != err {
+			return d, errs.New(500, "pkg.failed", "detail", k.Error())
+		}
 		return d, errs.New(500, "pkg.failed", "detail", lastLine(out))
 	}
 	updMu.Lock()
