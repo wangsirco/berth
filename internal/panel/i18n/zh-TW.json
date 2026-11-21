@@ -1644,6 +1644,7 @@
  "site.bad_path_rule": "路徑規則 {path} 不完整",
  "site.bad_php": "請選擇 PHP 版本",
  "site.bad_redirect": "跳轉位址須以 http:// 或 https:// 開頭，狀態碼為 301/302/307/308",
+ "site.bad_redirect_host": "只有這個網站的其他網域才能跳轉到主網域（{domain}）",
  "site.bad_root_sub": "網站根目錄的子目錄不對",
  "site.bad_target": "轉發目標不完整或格式不對",
  "site.bad_tls_mode": "不支援的憑證方式：{mode}",

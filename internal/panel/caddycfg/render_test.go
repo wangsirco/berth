@@ -112,7 +112,7 @@ func TestRenderOptions(t *testing.T) {
 			[]string{`"Origin":["https://x.com","https://y.com"]`, `{http.request.header.Origin}`, `"Access-Control-Allow-Credentials":["true"]`, `"status_code":204`}, nil},
 		{"basic auth", Options{BasicAuth: []BasicUser{{User: "ops", Hash: "$2a$14$abcdefghijklmnopqrstuuJ4n3tLcOTfQe0gD1b7sZ0hNw7yJc1q"}}},
 			[]string{`"handler":"authentication"`, `"username":"ops"`, `"algorithm":"bcrypt"`}, nil},
-		{"ip deny", Options{DenyIPs: []string{"1.2.3.4"}}, []string{`"remote_ip":{"ranges":["1.2.3.4"]}`, `"status_code":403`}, nil},
+		{"ip deny", Options{DenyIPs: []string{"1.2.3.4"}}, []string{`"client_ip":{"ranges":["1.2.3.4"]}`, `"status_code":403`}, nil},
 		{"ip allow behind cf", Options{AllowIPs: []string{"10.0.0.0/8"}, RealIPCF: true}, []string{`"not":[{"client_ip":{"ranges":["10.0.0.0/8"]}}]`}, nil},
 		{"timeouts", Options{Timeouts: Timeouts{Dial: 5, Read: 120}}, []string{`"dial_timeout":"5s"`, `"response_header_timeout":"120s"`}, nil},
 		{"path proxy strip", Options{Paths: []PathRule{{Path: "/api/*", Action: "proxy", Upstream: "api:8080", Strip: true}}},
@@ -370,5 +370,32 @@ func TestRenderNoWAF(t *testing.T) {
 	off, err := Render([]Site{s}, Env{NoWAF: true})
 	if err != nil || strings.Contains(string(off), `load_owasp_crs`) {
 		t.Fatalf("without the WAF: %v", err)
+	}
+}
+
+func TestRedirectHostsAndRealIP(t *testing.T) {
+	s := Site{ID: 1, Domains: []string{"hwh.co.nz", "www.hwh.co.nz", "hwh.ihan.nz"}, Enabled: true,
+		Target: Target{Type: "static"}, TLS: TLS{Mode: "internal"},
+		Options: Options{Redirect: &RedirectHosts{Hosts: []string{"www.hwh.co.nz", "hwh.ihan.nz"}, Code: 302}}}
+	if err := Normalize(&s); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Render([]Site{s}, Env{LocalProxies: []string{"172.19.0.0/16"}})
+	var buf bytes.Buffer
+	json.Compact(&buf, b)
+	j := strings.ReplaceAll(buf.String(), `\u0026`, "&")
+	for _, want := range []string{
+		`"Location":["https://hwh.co.nz{http.request.uri}"]`, `"status_code":302`,
+		`"host":["www.hwh.co.nz","hwh.ihan.nz"]`, `"host":["hwh.co.nz"]`,
+		`"172.19.0.0/16"`, `"client_ip_headers":["CF-Connecting-IP","X-Forwarded-For"]`,
+	} {
+		if !strings.Contains(j, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	bad := s
+	bad.Options.Redirect = &RedirectHosts{Hosts: []string{"hwh.co.nz"}}
+	if Normalize(&bad) == nil {
+		t.Error("the primary domain cannot redirect to itself")
 	}
 }

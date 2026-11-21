@@ -1,3 +1,5 @@
+import { can, useAuth } from '@/lib/auth'
+import { DomainDNS } from '@/components/dns/DomainDNS'
 import { useEffect, useMemo, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { useHost } from '@/components/shell/host'
@@ -29,6 +31,7 @@ export function NewSiteDialog({ site, preset, domains: presetDomains, onClose, o
     if (preset) init.target = { ...init.target, ...preset } as Site['target']
     return init
   })
+  const { user } = useAuth()
   const [doms, setDoms] = useState<string[]>(site?.domains ?? presetDomains ?? [])
   const [domDraft, setDomDraft] = useState('')
   const domains = useMemo(() => [...doms, ...splitTags(domDraft).filter((x) => !doms.includes(x))], [doms, domDraft])
@@ -110,8 +113,7 @@ export function NewSiteDialog({ site, preset, domains: presetDomains, onClose, o
           <TagInput value={doms} onChange={setDoms} draft={domDraft} onDraft={setDomDraft} primary primaryLabel={t('sites.primary')} makePrimaryLabel={t('sites.make_primary')}
             invalid={(d) => !/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i.test(d)}
             placeholder="shop.example.com" ariaLabel={t('sites.domains')} autoFocus={!site} />
-          {dnsCheck && <p className={cx('mt-1 text-[12.5px]', dnsCheck.status === 'ok' ? 'text-ok' : dnsCheck.status === 'warn' ? 'text-warn' : 'text-bad')}>
-            {dnsCheck.status === 'ok' ? '✓ ' : '! '}{dnsCheck.message}</p>}
+          <div className="mt-1.5"><DomainDNS host={host} names={domains} manage={can(user, 'sites.manage')} /></div>
           {dnsCheck && dnsCheck.status !== 'ok' && ddnsName && <p className="mt-1 text-[12.5px] text-mute">{t('sites.cname_to_ddns', { name: primary, ddns: ddnsName })}</p>}
         </Field>
 
@@ -208,28 +210,7 @@ export function NewSiteDialog({ site, preset, domains: presetDomains, onClose, o
           </Select>}
         </div>
 
-        {!site && !isLocal && (
-          <div>
-            <div className="mb-1.5 text-[12.5px] font-semibold">{t('sites.public')}</div>
-            {cf.length === 0 ? <p className="text-[12.5px] text-mute">{t('sites.public_no_cf')}</p> : (
-              <div className="space-y-1.5">
-                <Switch checked={publish.on} onChange={(v) => setPublish((p) => ({ ...p, on: v, integration: p.integration || cf[0].id }))}
-                  label={t('sites.publish_dns', { ip: pub.data?.ipv4 ?? '…' })} />
-                {publish.on && <div className="flex flex-wrap items-center gap-2 pl-1">
-                  <Select value={publish.integration} onChange={(e) => setPublish((p) => ({ ...p, integration: e.target.value, zone: '' }))} aria-label={t('sites.dns_account')}>
-                    {cf.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                  </Select>
-                  <Select value={publish.zone} onChange={(e) => setPublish((p) => ({ ...p, zone: e.target.value }))} aria-label={t('sites.zone')}>
-                    <option value="">{t('sites.zone')}</option>
-                    {zones.data?.items.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
-                  </Select>
-                  <Switch checked={publish.proxied} onChange={(v) => setPublish((p) => ({ ...p, proxied: v }))} label={t('sites.cf_proxied')} />
-                </div>}
-              </div>
-            )}
-            <p className="mt-1 text-[12px] text-mute">{t('sites.public_later')}</p>
-          </div>
-        )}
+        {!site && !isLocal && <p className="text-[12px] text-mute">{t('sites.public_later')}</p>}
 
         <div>
           <button type="button" className="text-[12.5px] text-acc hover:underline" onClick={() => setAdvanced(!advanced)}>{advanced ? t('sites.hide_options') : t('sites.show_options')}</button>

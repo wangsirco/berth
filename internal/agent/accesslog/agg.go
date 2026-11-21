@@ -43,16 +43,22 @@ type Minute struct {
 	Scans     int64            `json:"scans"`
 	ScanPaths map[string]int64 `json:"scan_paths,omitempty"`
 	Bots      int64            `json:"bots"`
+	BotKinds  map[string]int64 `json:"bot_kinds,omitempty"` // requests by ai, search, social, monitor, scanner, tool, other
+	HumanReq  int64            `json:"human_req"`           // requests from people (browsers)
+	Humans    int64            `json:"humans"`              // unique people
+	HLLHuman  []byte           `json:"hll_human,omitempty"`
+	New       int64            `json:"new"` // people this site had not seen in the last 90 days
 	Slow      []Slow           `json:"slow,omitempty"`
 	Uniq      int64            `json:"uniq"`
 	HLL       []byte           `json:"hll,omitempty"` // packed registers, for merging into hours
 
-	hll *HLL
+	hll      *HLL
+	hllHuman *HLL
 }
 
 func newMinute(site string, ts int64) *Minute {
 	return &Minute{TS: ts, Site: site, Status: map[string]int64{}, Lat: make([]int64, len(LatencyBounds)+1),
-		Countries: map[string]int64{}, Paths: map[string]int64{}, Refs: map[string]int64{}, ScanPaths: map[string]int64{}, hll: NewHLL()}
+		Countries: map[string]int64{}, Paths: map[string]int64{}, Refs: map[string]int64{}, ScanPaths: map[string]int64{}, BotKinds: map[string]int64{}, hll: NewHLL(), hllHuman: NewHLL()}
 }
 
 // close packs the visitor counter and trims the top lists.
@@ -60,6 +66,11 @@ func (m *Minute) close() {
 	m.Uniq = m.hll.Count()
 	m.HLL = m.hll.Pack()
 	m.hll = nil
+	if m.hllHuman != nil {
+		m.Humans = m.hllHuman.Count()
+		m.HLLHuman = m.hllHuman.Pack()
+		m.hllHuman = nil
+	}
 	m.Paths = Top(m.Paths, topKeep)
 	m.Refs = Top(m.Refs, topKeep)
 	m.ScanPaths = Top(m.ScanPaths, topKeep)
@@ -91,8 +102,6 @@ var scanRe = regexp.MustCompile(`(?i)(^/(wp-login\.php|wp-admin|xmlrpc\.php|wp-c
 
 func IsScan(path string, status int) bool { return status >= 400 && scanRe.MatchString(path) }
 
-var botRe = regexp.MustCompile(`(?i)bot|crawl|spider|slurp|curl/|wget/|python-requests|go-http-client|httpclient|scanner|zgrab|masscan|nmap`)
-
 type entry struct {
 	TS      float64 `json:"ts"`
 	Request struct {
@@ -111,8 +120,8 @@ type entry struct {
 // Country maps an address to a two-letter code ("" unknown, "LAN" private).
 type Country func(ip net.IP) string
 
-// add counts one log line into m.
-func (m *Minute) add(e *entry, country Country) {
+// add counts one log line into m. seen (may be nil) tells first-time visitors apart.
+func (m *Minute) add(e *entry, country Country, seen *seenSet) {
 	m.Req++
 	m.Bytes += e.Size
 	switch {
@@ -128,14 +137,24 @@ func (m *Minute) add(e *entry, country Country) {
 	ms := e.Duration * 1000
 	i := sort.SearchFloat64s(LatencyBounds, ms)
 	m.Lat[i]++
-	ipStr := e.Request.ClientIP
-	if ipStr == "" {
-		ipStr = e.Request.RemoteIP
-	}
+	ipStr := visitorIP(e)
 	ua := first(e.Request.Headers["User-Agent"])
 	m.hll.Add(ipStr + "|" + ua)
-	if botRe.MatchString(ua) || ua == "" {
+	if k := BotKind(ua); k != "" {
 		m.Bots++
+		if m.BotKinds == nil {
+			m.BotKinds = map[string]int64{}
+		}
+		m.BotKinds[k]++
+	} else {
+		m.HumanReq++
+		if m.hllHuman == nil {
+			m.hllHuman = NewHLL()
+		}
+		m.hllHuman.Add(ipStr + "|" + ua)
+		if seen != nil && seen.isNew(m.Site, visitorHash(ipStr, ua), int32(int64(e.TS)/86400)) {
+			m.New++
+		}
 	}
 	if country != nil {
 		if ip := net.ParseIP(ipStr); ip != nil {

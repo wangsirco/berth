@@ -140,6 +140,7 @@ make cross      # linux/arm64
 
 ## More
 
+- [Changelog](CHANGELOG.md)
 - [Plugin developer guide](https://github.com/wangsirco/berth-plugins/blob/main/docs/PLUGIN-GUIDE.md)
 - [Wharf](https://github.com/wangsirco/wharf), the sister product: an OpenWrt router panel for the whole family and several admins; paired with Berth it opens ports for your sites, shares bans and sends alerts once.
 

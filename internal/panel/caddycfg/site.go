@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -113,26 +114,37 @@ type Timeouts struct {
 	Write int `json:"write,omitempty"` // unused by Caddy per route; kept for the UI
 }
 
+// RedirectHosts: some of a site's names redirect to its primary name.
+type RedirectHosts struct {
+	Hosts []string `json:"hosts"`
+	Code  int      `json:"code"` // 301 (permanent, default) | 302 (temporary) | 307 | 308
+}
+
 type Options struct {
-	Note            string      `json:"note,omitempty"` // 备注: shown in lists in place of the domains
-	NoHTTPSRedirect bool        `json:"no_https_redirect,omitempty"`
-	WWW             string      `json:"www,omitempty"` // "" | to_www | to_apex
-	HSTS            bool        `json:"hsts,omitempty"`
-	Compress        bool        `json:"compress,omitempty"`
-	CacheStatic     bool        `json:"cache_static,omitempty"`
-	Timeouts        Timeouts    `json:"timeouts,omitempty"`
-	ReqHeaders      []HeaderOp  `json:"req_headers,omitempty"`
-	RespHeaders     []HeaderOp  `json:"resp_headers,omitempty"`
-	CORS            *CORS       `json:"cors,omitempty"`
-	Paths           []PathRule  `json:"paths,omitempty"`
-	BasicAuth       []BasicUser `json:"basic_auth,omitempty"`
-	AllowIPs        []string    `json:"allow_ips,omitempty"`
-	DenyIPs         []string    `json:"deny_ips,omitempty"`
-	RealIPCF        bool        `json:"real_ip_cloudflare,omitempty"`
-	LogDays         int         `json:"log_days,omitempty"`
-	WAF             *WAF        `json:"waf,omitempty"`
-	RateLimit       *RateLimit  `json:"rate_limit,omitempty"`
-	Hotlink         *Hotlink    `json:"hotlink,omitempty"`
+	Note            string `json:"note,omitempty"` // 备注: shown in lists in place of the domains
+	NoHTTPSRedirect bool   `json:"no_https_redirect,omitempty"`
+	WWW             string `json:"www,omitempty"` // "" | to_www | to_apex
+	// Redirect: names of this site that send visitors on to the primary domain (the
+	// first), keeping the path, instead of serving the site themselves
+	Redirect *RedirectHosts `json:"redirect,omitempty"`
+	// Group: a name the site list files this site under (default: its registered domain)
+	Group       string      `json:"group,omitempty"`
+	HSTS        bool        `json:"hsts,omitempty"`
+	Compress    bool        `json:"compress,omitempty"`
+	CacheStatic bool        `json:"cache_static,omitempty"`
+	Timeouts    Timeouts    `json:"timeouts,omitempty"`
+	ReqHeaders  []HeaderOp  `json:"req_headers,omitempty"`
+	RespHeaders []HeaderOp  `json:"resp_headers,omitempty"`
+	CORS        *CORS       `json:"cors,omitempty"`
+	Paths       []PathRule  `json:"paths,omitempty"`
+	BasicAuth   []BasicUser `json:"basic_auth,omitempty"`
+	AllowIPs    []string    `json:"allow_ips,omitempty"`
+	DenyIPs     []string    `json:"deny_ips,omitempty"`
+	RealIPCF    bool        `json:"real_ip_cloudflare,omitempty"`
+	LogDays     int         `json:"log_days,omitempty"`
+	WAF         *WAF        `json:"waf,omitempty"`
+	RateLimit   *RateLimit  `json:"rate_limit,omitempty"`
+	Hotlink     *Hotlink    `json:"hotlink,omitempty"`
 }
 
 // Hotlink (防盗链): files of these types may only be embedded by the site itself and the
@@ -285,6 +297,28 @@ func Normalize(s *Site) error {
 		return bad("site.bad_target")
 	}
 	o := &s.Options
+	o.Group = strings.TrimSpace(o.Group)
+	if len([]rune(o.Group)) > 40 || strings.ContainsAny(o.Group, "\r\n") {
+		return bad("site.bad_option", "option", "group")
+	}
+	if rd := o.Redirect; rd != nil {
+		if len(rd.Hosts) == 0 {
+			o.Redirect = nil
+		} else {
+			switch rd.Code {
+			case 0:
+				rd.Code = 301
+			case 301, 302, 307, 308:
+			default:
+				return bad("site.bad_option", "option", "redirect")
+			}
+			for _, h := range rd.Hosts {
+				if !slices.Contains(s.Domains, h) || (len(s.Domains) > 0 && h == s.Domains[0]) {
+					return bad("site.bad_redirect_host", "domain", h)
+				}
+			}
+		}
+	}
 	switch o.WWW {
 	case "", "to_www", "to_apex":
 	default:

@@ -1644,6 +1644,7 @@
  "site.bad_path_rule": "The path rule {path} is incomplete",
  "site.bad_php": "Pick a PHP version",
  "site.bad_redirect": "Redirects need an http(s):// URL and code 301/302/307/308",
+ "site.bad_redirect_host": "Only the site's other names can redirect to the primary ({domain})",
  "site.bad_root_sub": "Bad document root subfolder",
  "site.bad_target": "The target is incomplete or invalid",
  "site.bad_tls_mode": "Unsupported TLS mode: {mode}",

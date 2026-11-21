@@ -4,7 +4,7 @@
 // empty database, tunnel it to localhost, and drive it with a local Chromium browser.
 import { createHmac, randomBytes } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -460,7 +460,7 @@ await spec('access-waf', async () => {
   await click('::-p-text(WAF)')
   await waitText('还没有网站开启 WAF')
   await click('::-p-text(Cloudflare)')
-  await waitText('还没有 Cloudflare 账号')
+  await waitText('连接 Cloudflare') // no account yet: the connect wizard
 })
 
 await spec('traffic', async () => {
@@ -1477,7 +1477,7 @@ chown -R site-web${id}: /srv/berth/caddy/sites/${D}`)
     await waitText('原生 PHP', 10000)
     await waitText(D, 10000) // listed as using 8.4
     await page.goto(`${BASE}/local/sites/s/${id}`)
-    await click('::-p-aria([name="PHP"][role="radio"])')
+    await click('::-p-xpath(//nav[@aria-label="网站设置分类"]//button[normalize-space(.)="PHP"])')
     await waitText('这个网站的 PHP 设置', 10000)
     await waitText('site-web' + id)
     await page.screenshot({ path: OUT + 'php-native.png' })
@@ -1721,13 +1721,69 @@ await spec('site-protect', async () => {
     for (let i = 0; i < 10; i++) { if ((await api(`/api/v1/changes/${off.body.id}`)).body.status === 'done') break; await sleep(500) }
     assert(onHost(`echo y > /srv/berth/caddy/sites/${D}/index.html && cat /srv/berth/caddy/sites/${D}/index.html`) === 'y', 'unlocked again')
     await page.goto(`${BASE}/local/sites/s/${site.result.id}`)
-    await click('::-p-xpath(//button[normalize-space(.)="防护"])')
+    await click('::-p-xpath(//nav[@aria-label="网站设置分类"]//button[normalize-space(.)="访问控制与防护"])')
     await waitText('防盗链', 10000)
     await page.screenshot({ path: OUT + 'site-protect.png' })
   } finally {
     onHost(`chattr -R -i /srv/berth/caddy/sites/${D} 2>/dev/null; true`)
     await change('site.delete', { id: site.result.id })
     onHost(`rm -rf /srv/berth/caddy/sites/${D}; [ -f /srv/berth/caddy/logs/${D}.log ] && : > /srv/berth/caddy/logs/${D}.log; true`) // emptied, not removed: Caddy may keep the file open
+  }
+})
+
+// The site page: domains with roles (primary / also serves / redirects), a real redirect through
+// the edge, groups in the list, DNS lookup, folder labels and the Cloudflare welcome.
+await spec('site-page', async () => {
+  const onHost = (cmd) => sh('ssh', [HOST, cmd])
+  const D = 'page-e2e.berth.test', W = 'www.page-e2e.berth.test'
+  let id = 0
+  try {
+    const made = await change('site.create', { domains: [D, W], target: { type: 'static' }, tls: { mode: 'internal' } })
+    assert(made.status === 'done', 'site: ' + JSON.stringify(made.result))
+    id = made.result.id
+    await page.goto(`${BASE}/local/sites/s/${id}`)
+    await waitText('概览', 10000)
+    await page.screenshot({ path: OUT + 'site-page.png' })
+    await click('::-p-xpath(//nav[@aria-label="网站设置分类"]//button[normalize-space(.)="域名与跳转"])')
+    await waitText('一个网站可以有多个域名')
+    const roles = await page.$$('select[aria-label="用途"]')
+    assert(roles.length === 2, 'a role per name: ' + roles.length)
+    await roles[1].select('redirect')
+    await click(btn('保存域名设置'))
+    await click('[data-testid=confirm]:not([disabled])', 15000)
+    await page.waitForFunction(() => document.querySelectorAll('[role=dialog]').length === 0, { timeout: 20000 })
+    const saved = (await api(`/api/v1/hosts/local/sites/${id}`)).body.site
+    assert(saved.options.redirect?.hosts?.[0] === W && saved.options.redirect.code === 301, 'saved: ' + JSON.stringify(saved.options))
+    await page.screenshot({ path: OUT + 'site-domains.png' })
+    // the edge really redirects, path and query kept
+    let got = ''
+    for (let i = 0; i < 20 && !got.startsWith('301'); i++) {
+      got = onHost(`curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' --resolve ${W}:443:127.0.0.1 'https://${W}/a/b?x=1'; true`)
+      if (!got.startsWith('301')) await sleep(500)
+    }
+    assert(got === `301 https://${D}/a/b?x=1`, 'redirect: ' + got)
+    // a group of its own in the list
+    assert((await change('site.update', { ...saved, options: { ...saved.options, group: 'e2e 分组' } })).status === 'done', 'group')
+    await page.goto(`${BASE}/local/sites`)
+    await waitText('e2e 分组', 10000)
+    // DNS lookup answers (no account here: it falls back to a public lookup)
+    const lk = (await api(`/api/v1/hosts/local/domains/lookup?names=${D}`)).body
+    assert(lk.items?.[0]?.name === D && typeof lk.items[0].points === 'string', 'lookup: ' + JSON.stringify(lk))
+    // folders explain themselves
+    await page.goto(`${BASE}/local/files/srv/berth`)
+    await waitText('网站入口', 10000)
+    await waitText('应用（Compose）')
+    await page.goto(`${BASE}/local/files/etc`)
+    await waitText('各个程序的配置文件', 10000)
+    // Cloudflare without an account: a welcome, then the token steps
+    await page.goto(`${BASE}/local/cloudflare`)
+    await waitText('连接 Cloudflare', 10000)
+    await click(btn('开始连接'))
+    await waitText('Cloudflare Tunnel')
+    await page.screenshot({ path: OUT + 'cf-welcome.png' })
+    await page.keyboard.press('Escape')
+  } finally {
+    if (id) await change('site.delete', { id })
   }
 })
 
@@ -1800,6 +1856,13 @@ await spec('panel-snapshot', async () => {
   let file = ''
   for (let i = 0; i < 30 && !file; i++) { file = readdirSync(dir).find((f) => f.endsWith('.berthsnap')) ?? ''; if (!file) await sleep(500) }
   assert(file, 'snapshot downloaded')
+  // the name can appear before the bytes are all written: wait for a stable, non-empty file
+  for (let i = 0, last = -1; i < 40; i++) {
+    const n = statSync(dir + file).size
+    if (n > 10 && n === last) break
+    last = n
+    await sleep(500)
+  }
   const head = readFileSync(dir + file).subarray(0, 10).toString()
   assert(head === 'BERTHSNAP1', 'sealed file: ' + head)
   sh('scp', ['-q', dir + file, HOST + ':/tmp/e2e.berthsnap'])

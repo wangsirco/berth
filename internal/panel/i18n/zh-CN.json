@@ -1644,6 +1644,7 @@
  "site.bad_path_rule": "路径规则 {path} 不完整",
  "site.bad_php": "请选择 PHP 版本",
  "site.bad_redirect": "跳转地址须以 http:// 或 https:// 开头，状态码为 301/302/307/308",
+ "site.bad_redirect_host": "只有这个网站的其他域名才能跳转到主域名（{domain}）",
  "site.bad_root_sub": "网站根目录的子目录不对",
  "site.bad_target": "转发目标不完整或格式不对",
  "site.bad_tls_mode": "不支持的证书方式：{mode}",

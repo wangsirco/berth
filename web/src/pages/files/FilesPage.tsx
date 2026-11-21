@@ -1,3 +1,4 @@
+import { folderLabel } from './labels'
 import { ChevronRight, Download, File, FileArchive, Folder, FolderPlus, FilePlus, Link2, MoreHorizontal, Search, Star, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -110,6 +111,10 @@ export default function FilesPage() {
       onDrop={(e) => { e.preventDefault(); setDragging(false); if (write) void upload(e.dataTransfer.files) }}>
       {err && <Notice tone="bad">{err}</Notice>}
       {dragging && <Notice>{t('files.drop_here', { dir: path })}</Notice>}
+      {(() => { const l = folderLabel(path); return l && (
+        <div className={cx('rounded-[var(--radius-box)] border px-3.5 py-2 text-[12.5px]', l.danger ? 'border-warn/50 bg-warn/10' : 'border-line bg-soft')}>
+          <b className="font-semibold">{t('flabel.' + l.key, { name: l.arg ?? '' })}</b>：{t('flabel.' + l.key + '_d', { name: l.arg ?? '' })}{l.danger ? ' ' + t('flabel.danger_d') : ''}
+        </div>) })()}
       <div className="flex flex-wrap items-center gap-2">
         <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-[13.5px]" aria-label={t('files.path')}>
           <button className="rounded px-1 hover:bg-soft" onClick={() => go('/')}>/</button>
@@ -174,6 +179,9 @@ export default function FilesPage() {
               {e.dir ? <Folder className="size-4 shrink-0 text-acc" /> : <File className="size-4 shrink-0 text-mute" />}
               <span className="truncate">{e.name}</span>
               {e.link && <span title={e.link_target}><Link2 className="size-3.5 text-mute" /></span>}
+              {(() => { const l = e.dir ? folderLabel(e.path) : null; return l && (
+                <span title={t('flabel.' + l.key + '_d', { name: l.arg ?? '' })} className={cx('shrink-0 truncate rounded px-1.5 text-[11.5px]', l.danger ? 'bg-warn/15 text-warn' : 'bg-tint text-acc')}>
+                  {t('flabel.' + l.key, { name: l.arg ?? '' })}{l.danger ? ' · ' + t('flabel.danger') : ''}</span>) })()}
             </button>
             <span className="num w-20 text-right text-[12px] text-mute">{e.dir ? '' : bytes(e.size)}</span>
             <span className="num hidden w-32 text-right text-[12px] text-mute md:block">{datetime(e.mtime)}</span>

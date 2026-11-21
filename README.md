@@ -140,6 +140,7 @@ make cross      # linux/arm64
 
 ## 文档
 
+- [更新日志](CHANGELOG.md)
 - [插件开发指南](https://github.com/wangsirco/berth-plugins/blob/main/docs/PLUGIN-GUIDE.md)
 - [姊妹产品 Wharf 码头](https://github.com/wangsirco/wharf)：给全家人和多位管理员一起用的 OpenWrt 路由器面板，和 Berth 配对后可以自动开端口、同步封禁、统一告警。
 

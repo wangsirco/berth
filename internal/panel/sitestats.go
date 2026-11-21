@@ -87,7 +87,7 @@ func mergeStat(tx *sql.Tx, table, host, site string, ts int64, m *accesslog.Minu
 	}
 	cur.Merge(m)
 	if !keepHLL {
-		cur.HLL = nil
+		cur.HLL, cur.HLLHuman = nil, nil
 	}
 	b, _ := json.Marshal(cur)
 	_, err := tx.Exec(`INSERT INTO `+table+`(host, site, ts, data) VALUES(?,?,?,?) ON CONFLICT(host, site, ts) DO UPDATE SET data=excluded.data`,
@@ -109,6 +109,9 @@ type statPoint struct {
 	E5    int64 `json:"e5"`
 	P95   int64 `json:"p95"`
 	Uniq  int64 `json:"uniq"`
+	Human int64 `json:"humans"` // unique people
+	Bots  int64 `json:"bots"`   // requests from programs
+	New   int64 `json:"new"`    // first-time people
 }
 
 type kvCount struct {
@@ -170,14 +173,14 @@ func (a *App) siteStats(host, site, rng string, now time.Time) (map[string]any, 
 			buckets[bt] = &accesslog.Minute{TS: bt, Site: site}
 		}
 		buckets[bt].Merge(&m)
-		hll := m.HLL
-		m.HLL = nil // totals' visitors come from the hour rows below
+		hll, hh := m.HLL, m.HLLHuman
+		m.HLL, m.HLLHuman = nil, nil // totals' visitors come from the hour rows below
 		total.Merge(&m)
-		m.HLL = hll
+		m.HLL, m.HLLHuman = hll, hh
 	}
 	rows.Close()
 	// unique visitors over the whole range: merge the hourly registers
-	uniq := accesslog.NewHLL()
+	uniq, humans := accesslog.NewHLL(), accesslog.NewHLL()
 	hr, err := a.db.Query(`SELECT data FROM site_stats_hour WHERE host=? AND site=? AND ts>=? AND ts<?`, host, site, start-start%3600, end)
 	if err == nil {
 		for hr.Next() {
@@ -187,6 +190,9 @@ func (a *App) siteStats(host, site, rng string, now time.Time) (map[string]any, 
 			if json.Unmarshal([]byte(raw), &m) == nil && len(m.HLL) > 0 {
 				uniq.Merge(accesslog.Unpack(m.HLL))
 			}
+			if len(m.HLLHuman) > 0 {
+				humans.Merge(accesslog.Unpack(m.HLLHuman))
+			}
 		}
 		hr.Close()
 	}
@@ -194,7 +200,7 @@ func (a *App) siteStats(host, site, rng string, now time.Time) (map[string]any, 
 	for ts := start; ts < end; ts += step {
 		p := statPoint{TS: ts}
 		if m := buckets[ts]; m != nil {
-			p = statPoint{TS: ts, Req: m.Req, Bytes: m.Bytes, E4: m.Status["4xx"], E5: m.Status["5xx"], P95: accesslog.Percentile(m.Lat, 0.95), Uniq: m.Uniq}
+			p = statPoint{TS: ts, Req: m.Req, Bytes: m.Bytes, E4: m.Status["4xx"], E5: m.Status["5xx"], P95: accesslog.Percentile(m.Lat, 0.95), Uniq: m.Uniq, Human: m.Humans, Bots: m.Bots, New: m.New}
 		}
 		series = append(series, p)
 	}
@@ -202,6 +208,7 @@ func (a *App) siteStats(host, site, rng string, now time.Time) (map[string]any, 
 		"range": rng, "step": step, "series": series,
 		"total": map[string]any{
 			"req": total.Req, "bytes": total.Bytes, "uniq": uniq.Count(), "status": total.Status, "bots": total.Bots, "scans": total.Scans,
+			"humans": humans.Count(), "human_req": total.HumanReq, "new": total.New, "returning": max(humans.Count()-total.New, 0), "bot_kinds": total.BotKinds,
 			"p50": accesslog.Percentile(total.Lat, 0.5), "p95": accesslog.Percentile(total.Lat, 0.95), "lat": total.Lat, "lat_bounds": accesslog.LatencyBounds,
 		},
 		"countries": sortedTop(total.Countries, 15), "paths": sortedTop(total.Paths, 20), "refs": sortedTop(total.Refs, 20),

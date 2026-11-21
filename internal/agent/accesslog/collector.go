@@ -55,6 +55,8 @@ type Collector struct {
 	open  map[string]map[int64]*Minute
 	done  []doneMinute
 	seq   int64
+	seen  *seenSet
+	saved time.Time
 }
 
 func NewCollector(dir, statePath string, country Country) *Collector {
@@ -63,6 +65,7 @@ func NewCollector(dir, statePath string, country Country) *Collector {
 	if b, err := os.ReadFile(statePath); err == nil {
 		json.Unmarshal(b, &c.files)
 	}
+	c.seen = loadSeen(statePath + ".visitors")
 	return c
 }
 
@@ -117,6 +120,10 @@ func (c *Collector) Poll() {
 		}
 	}
 	c.closeMinutes()
+	if c.seen != nil && c.Now().Sub(c.saved) > 5*time.Minute {
+		c.seen.save(c.StatePath + ".visitors")
+		c.saved = c.Now()
+	}
 	if changed {
 		if b, err := json.Marshal(c.files); err == nil {
 			tmp := c.StatePath + ".tmp"
@@ -159,7 +166,7 @@ func (c *Collector) readFrom(site, path string, st *fileState) {
 		}
 		st.Off += int64(len(line))
 		if e, ok := parse(line); ok {
-			c.minute(site, minuteOf(e.TS)).add(e, c.Country)
+			c.minute(site, minuteOf(e.TS)).add(e, c.Country, c.seen)
 		}
 	}
 }

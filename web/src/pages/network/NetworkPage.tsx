@@ -1,3 +1,4 @@
+import { CloudflareWelcome, TokenDialog } from '../cloudflare/Welcome'
 import { useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Navigate } from 'react-router-dom'
@@ -565,16 +566,20 @@ export function CloudflareTab({ section }: { section?: 'tunnel' | 'zones' | 'acc
   const [acc, setAcc] = useState('')
   const [stats, setStats] = useState<{ integ: string; zone: CFZone } | null>(null)
   const [access, setAccess] = useState(false)
+  const [tok, setTok] = useState<{ id: string; name: string } | 'new' | null>(null)
   if (!d.data) return d.error ? <Notice tone="bad">{d.error.message}</Notice> : <div className="p-6 text-[13px] text-mute">{t('common.loading')}</div>
   const accounts = d.data.accounts
-  if (accounts.length === 0) return <Empty title={t('cf.no_accounts')}>{t('cf.no_accounts_hint')}</Empty>
+  if (accounts.length === 0) return manage ? <CloudflareWelcome onDone={() => void d.reload()} /> : <Empty title={t('cf.no_accounts')}>{t('cf.no_accounts_hint')}</Empty>
   const cur = accounts.find((a) => a.id === acc) ?? accounts[0]
   const routed = new Set(d.data.routes.map((r) => r.site_id))
   const reload = () => void d.reload()
   return (
     <>
-      <Box title={t('cf.accounts')} count={accounts.length} right={accounts.length > 1 && (
-        <Select className="h-7 text-[12.5px]" value={cur.id} onChange={(e) => setAcc(e.target.value)}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select>)}>
+      <Box title={t('cf.accounts')} count={accounts.length} right={<span className="flex items-center gap-1.5">
+        {accounts.length > 1 && <Select className="h-7 text-[12.5px]" value={cur.id} onChange={(e) => setAcc(e.target.value)}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select>}
+        {manage && <Button size="sm" variant="ghost" onClick={() => setTok({ id: cur.id, name: cur.name })}>{t('cfw.replace')}</Button>}
+        {manage && <Button size="sm" variant="ghost" onClick={() => setTok('new')}>{t('cfw.add')}</Button>}
+      </span>}>
         {cur.error ? <div className="px-4 py-3"><Notice tone="bad">{t(cur.error)}</Notice></div> : (
           <div className="flex flex-wrap gap-2 px-4 py-3">
             {FEATURES.map((f) => <Pill key={f} tone={cur.features?.[f] ? 'ok' : 'bad'}>{(cur.features?.[f] ? '✓ ' : '✗ ') + t('cf.f_' + f)}</Pill>)}
@@ -583,6 +588,7 @@ export function CloudflareTab({ section }: { section?: 'tunnel' | 'zones' | 'acc
         )}
       </Box>
 
+      {tok && <TokenDialog existing={tok === 'new' ? undefined : tok} newId={'cf' + (accounts.length + 1)} onClose={() => setTok(null)} onDone={reload} />}
       {show('tunnel') && <Box title={t('cf.tunnel')} right={manage && (d.data.tunnel
         ? <Button size="sm" variant="ghost" onClick={() => run('cf.tunnel.delete', {}, { host, onDone: reload })}>{t('action.cf.tunnel.delete')}</Button>
         : cur.features?.tunnel && <Button size="sm" variant="primary" onClick={() => run('cf.tunnel.create', { integration: cur.id }, { host, onDone: reload })}>{t('action.cf.tunnel.create')}</Button>)}>

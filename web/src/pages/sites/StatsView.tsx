@@ -6,11 +6,11 @@ import { bytes } from '@/lib/format'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 
-interface Point { ts: number; req: number; bytes: number; e4: number; e5: number; p95: number }
+interface Point { ts: number; req: number; bytes: number; e4: number; e5: number; p95: number; uniq?: number; humans?: number; bots?: number; new?: number }
 interface KV { k: string; n: number }
 export interface Stats {
   range: string; step: number; series: Point[]
-  total: { req: number; bytes: number; uniq: number; status: Record<string, number>; bots: number; scans: number; p50: number; p95: number }
+  total: { req: number; bytes: number; uniq: number; status: Record<string, number>; bots: number; scans: number; p50: number; p95: number; humans?: number; human_req?: number; new?: number; returning?: number; bot_kinds?: Record<string, number> }
   countries: KV[]; paths: KV[]; refs: KV[]; scan_paths: KV[]; slow: { ts: number; method: string; path: string; status: number; ms: number }[]
   geo_credit: string
 }
@@ -79,10 +79,12 @@ export function StatsView({ host, siteId }: { host: string; siteId: number }) {
       {s && s.total.req === 0 ? <Empty title={t('stats.empty')}>{t('stats.empty_hint')}</Empty> : s && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[[t('stats.requests'), fmtN(s.total.req)], [t('stats.visitors'), fmtN(s.total.uniq)], [t('stats.traffic'), bytes(s.total.bytes)], ['p95', s.total.p95 + ' ms']].map(([k, v]) => (
-              <div key={k}><div className="text-[12px] text-mute">{k}</div><div className="num text-[18px] font-semibold">{v}</div></div>
+            {[[t('stats.people'), fmtN(s.total.humans ?? s.total.uniq), t('stats.people_d')], [t('stats.new'), fmtN(s.total.new ?? 0), t('stats.returning', { n: fmtN(s.total.returning ?? 0) })],
+              [t('stats.requests'), fmtN(s.total.req), t('stats.from_people', { n: fmtN(s.total.human_req ?? 0) })], [t('stats.traffic'), bytes(s.total.bytes), 'p95 ' + s.total.p95 + ' ms']].map(([k, v, sub]) => (
+              <div key={k}><div className="text-[12px] text-mute">{k}</div><div className="num text-[18px] font-semibold">{v}</div><div className="text-[11.5px] text-mute">{sub}</div></div>
             ))}
           </div>
+          <Who s={s} />
           {range === '7d' ? <Heat series={s.series} /> : <Bars series={s.series} />}
           <div className="flex flex-wrap gap-2 text-[12.5px]">
             {['2xx', '3xx', '4xx', '5xx'].map((c) => <span key={c} className={cx('num', c === '5xx' && (s.total.status[c] ?? 0) > 0 && 'text-bad')}>{c} {fmtN(s.total.status[c] ?? 0)}</span>)}
@@ -101,6 +103,28 @@ export function StatsView({ host, siteId }: { host: string; siteId: number }) {
           <p className="text-[11.5px] text-mute">{s.geo_credit}</p>
         </>
       )}
+    </div>
+  )
+}
+
+// Who: people against programs, and which programs.
+function Who({ s }: { s: Stats }) {
+  const t = useT()
+  const people = s.total.human_req ?? 0
+  const kinds = Object.entries(s.total.bot_kinds ?? {}).sort((a, b) => b[1] - a[1])
+  const all = people + kinds.reduce((n, [, v]) => n + v, 0)
+  if (!all) return null
+  const color: Record<string, string> = { people: 'bg-acc', search: 'bg-[#4f7fd0]', ai: 'bg-[#9a6fd0]', social: 'bg-[#d08a4f]', monitor: 'bg-[#6fa86f]', tool: 'bg-[#8a8a8a]', scanner: 'bg-bad', other: 'bg-[#b8b2a6]' }
+  const parts: [string, number][] = [['people', people], ...kinds]
+  return (
+    <div>
+      <h4 className="mb-1 text-[12.5px] font-semibold">{t('stats.who')}</h4>
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-soft" role="img" aria-label={t('stats.who')}>
+        {parts.map(([k, v]) => v > 0 && <span key={k} className={color[k] ?? 'bg-mute'} style={{ width: `${(v / all) * 100}%` }} />)}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
+        {parts.map(([k, v]) => v > 0 && <span key={k} className="flex items-center gap-1" title={t('stats.k_' + k + '_d')}><i className={cx('size-2 rounded-full', color[k] ?? 'bg-mute')} />{t('stats.k_' + k)} <span className="num text-mute">{fmtN(v)} · {Math.round((v / all) * 100)}%</span></span>)}
+      </div>
     </div>
   )
 }

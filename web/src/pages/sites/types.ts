@@ -36,6 +36,8 @@ export interface Site {
     hotlink?: { exts: string[]; allow: string[]; allow_empty: boolean }
     no_https_redirect?: boolean
     www?: '' | 'to_www' | 'to_apex'
+    redirect?: { hosts: string[]; code: number }
+    group?: string
     hsts?: boolean
     compress?: boolean
     cache_static?: boolean

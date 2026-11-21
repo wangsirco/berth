@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { ImportDialog } from '@/components/import/ImportDialog'
 import { PhpTab } from './PhpTab'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { Spark } from '@/components/charts/Spark'
 import { useChange } from '@/components/change/ChangeDialog'
 import { hostPath, useHost } from '@/components/shell/host'
 import { Button } from '@/components/ui/Button'
-import { Box, Dot, Empty, Notice, Pill, Row } from '@/components/ui/Box'
+import { Box, Empty, Notice } from '@/components/ui/Box'
 import { can, useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
@@ -14,9 +14,10 @@ import { useEvents } from '@/lib/useEvents'
 import { ReauthProvider } from '../account/reauth'
 import { CertsTab } from './CertsTab'
 import { NewSiteDialog } from './NewSiteDialog'
-import { SiteDrawer } from './SiteDrawer'
+import { SitePage } from './SitePage'
+import { SiteList } from './SiteList'
 import type { Stats } from './StatsView'
-import { siteName, targetText, type Site } from './types'
+import { type Site } from './types'
 import { TabBar } from '@/components/ui/Tabs'
 
 const TABS = ['', 'php', 'certs'] as const
@@ -38,7 +39,6 @@ export function useSites(host: string) {
 
 export default function SitesPage() {
   const t = useT()
-  const nav = useNavigate()
   const run = useChange()
   const { user } = useAuth()
   const { host } = useHost()
@@ -55,6 +55,7 @@ export default function SitesPage() {
   const manage = can(user, 'sites.manage')
   const reload = () => { void sites.reload(); void edge.reload() }
   if (moved) return <Navigate to={hostPath(host, moved)} replace />
+  if (openId > 0) return <ReauthProvider><SitePage id={openId} onChanged={reload} /></ReauthProvider>
   return (
     <ReauthProvider>
       <div className="space-y-3">
@@ -84,28 +85,12 @@ export default function SitesPage() {
             </Notice>
           )}
           {sites.error && <Notice tone="bad">{sites.error.message}</Notice>}
-          <Box title={t('nav.sites')} count={sites.data?.items.length}>
-            {sites.data?.items.length === 0 && <Empty title={t('sites.none')} action={manage && edge.data?.running ? <Button variant="primary" onClick={() => setCreating(true)}>{t('sites.new_title')}</Button> : undefined}>{t('sites.none_hint')}</Empty>}
-            {sites.data?.items.map((s) => (
-              <Row key={s.id} onClick={() => nav(hostPath(host, 'sites/s/' + s.id))}>
-                <Dot state={s.enabled ? 'ok' : 'off'} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-1.5 text-[13.5px]" title={s.domains.join('\n')}>
-                    <span className="truncate font-semibold">{siteName(s)}</span>
-                    {s.domains.length > 1 && <span className="num shrink-0 rounded bg-soft px-1.5 text-[11.5px] text-mute">{t('sites.more_domains', { n: s.domains.length - 1 })}</span>}
-                  </div>
-                  <div className="num truncate text-[12px] text-mute">{s.options.note ? s.domains[0] + ' · ' : ''}→ {targetText(s)}</div>
-                </div>
-                <Pill className="hidden sm:inline-flex">{t('sites.tls_' + s.tls.mode)}</Pill>
-                <span className="max-sm:hidden"><SiteSpark host={host} id={s.id} /></span>
-              </Row>
-            ))}
-          </Box>
+          {sites.data?.items.length === 0 ? <Box title={t('nav.sites')} count={0}><Empty title={t('sites.none')} action={manage && edge.data?.running ? <Button variant="primary" onClick={() => setCreating(true)}>{t('sites.new_title')}</Button> : undefined}>{t('sites.none_hint')}</Empty></Box>
+            : sites.data && <SiteList host={host} sites={sites.data.items} />}
           {edge.data?.running && <p className="text-[12px] text-mute">{t('sites.edge_note', { image: edge.data.image })}</p>}
         </>}
         {tab === 'php' && <PhpTab />}
         {tab === 'certs' && <CertsTab />}
-        {openId > 0 && <SiteDrawer id={openId} onClose={() => nav(hostPath(host, 'sites'))} onChanged={reload} />}
         {creating && <NewSiteDialog onClose={() => setCreating(false)} onDone={reload} />}
       </div>
     </ReauthProvider>

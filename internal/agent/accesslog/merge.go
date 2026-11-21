@@ -15,6 +15,9 @@ func (m *Minute) Merge(o *Minute) {
 	m.Bytes += o.Bytes
 	m.Scans += o.Scans
 	m.Bots += o.Bots
+	m.HumanReq += o.HumanReq
+	m.New += o.New
+	m.BotKinds = addMap(m.BotKinds, o.BotKinds)
 	for k, v := range o.Status {
 		m.Status[k] += v
 	}
@@ -42,6 +45,17 @@ func (m *Minute) Merge(o *Minute) {
 		m.Uniq = h.Count()
 	} else {
 		m.Uniq += o.Uniq
+	}
+	if len(o.HLLHuman) > 0 {
+		h := NewHLL()
+		if len(m.HLLHuman) > 0 {
+			h = Unpack(m.HLLHuman)
+		}
+		h.Merge(Unpack(o.HLLHuman))
+		m.HLLHuman = h.Pack()
+		m.Humans = h.Count()
+	} else {
+		m.Humans += o.Humans
 	}
 }
 

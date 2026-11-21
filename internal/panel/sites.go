@@ -82,6 +82,7 @@ func (a *App) edgeEnv(host string) (caddycfg.Env, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	env.NoWAF = !a.wafInstalled(ctx, host)
+	env.LocalProxies = a.edgeSubnets(ctx, host)
 	return env, nil
 }
 
@@ -581,6 +582,16 @@ func init() {
 					return nil, nil, err
 				}
 			}
+			// a static or PHP site lives in a folder named after its primary domain: a new
+			// primary takes the folder along (unless one with the new name already exists)
+			if (s.Target.Type == "static" || s.Target.Type == "php") && (old.Target.Type == "static" || old.Target.Type == "php") && s.Primary() != old.Primary() {
+				from, to := "/srv/berth/caddy/sites/"+old.Primary(), "/srv/berth/caddy/sites/"+s.Primary()
+				if err := a.call(env.Ctx, env.Host, "POST", "/v1/files/rename", map[string]string{"root": "/", "path": from, "to": to}, nil); err == nil {
+					env.Log("moved %s → %s", from, to)
+				} else {
+					env.Log("kept the folders as they are (%v)", err)
+				}
+			}
 			if err := a.saveSite(env.Host, &s, ""); err != nil {
 				return nil, nil, err
 			}
@@ -799,4 +810,21 @@ func appendUniq(l []int, v int) []int {
 		}
 	}
 	return append(l, v)
+}
+
+// edgeSubnets: the edge network's subnets (cloudflared and the edge sit on it).
+func (a *App) edgeSubnets(ctx context.Context, host string) []string {
+	var nets []struct {
+		Name   string `json:"name"`
+		Subnet string `json:"subnet"`
+	}
+	if a.call(ctx, host, "GET", "/v1/docker/networks", nil, &nets) != nil {
+		return nil
+	}
+	for _, n := range nets {
+		if n.Name == "berth-edge" && n.Subnet != "" {
+			return strings.Fields(strings.ReplaceAll(n.Subnet, ",", " "))
+		}
+	}
+	return nil
 }

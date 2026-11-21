@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ type Env struct {
 	ProjectPorts map[string]int
 	// NoWAF: the edge has no WAF (the WAF extension is not installed); WAF settings are skipped
 	NoWAF bool
+	// LocalProxies: subnets of local proxies in front of the edge whose CF-Connecting-IP /
+	// X-Forwarded-For carry the visitor (the edge network, where cloudflared runs)
+	LocalProxies []string
 }
 
 type CertFiles struct {
@@ -59,7 +63,6 @@ func Render(sites []Site, env Env) ([]byte, error) {
 	logs := obj{"default": obj{"level": "WARN", "exclude": []string{}}}
 	loggerNames := obj{}
 	httpLoggerNames := obj{}
-	realIP := false
 	var defaultExclude []string
 
 	for i := range sites {
@@ -86,9 +89,6 @@ func Render(sites []Site, env Env) ([]byte, error) {
 			if s.Options.NoHTTPSRedirect {
 				httpRoutes = append(httpRoutes, routes...)
 			}
-		}
-		if s.Options.RealIPCF {
-			realIP = true
 		}
 		// TLS policy
 		subjects := append([]string{}, hosts...)
@@ -152,10 +152,10 @@ func Render(sites []Site, env Env) ([]byte, error) {
 		if len(loggerNames) > 0 {
 			srv["logs"] = obj{"logger_names": loggerNames}
 		}
-		if realIP {
-			srv["trusted_proxies"] = obj{"source": "static", "ranges": CloudflareRanges}
-			srv["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
-		}
+		// the visitor's address, not the proxy's: Cloudflare (orange cloud) and a tunnel's
+		// cloudflared on the edge network both pass it on; nobody else can send from these ranges
+		srv["trusted_proxies"] = obj{"source": "static", "ranges": append(append([]string{}, CloudflareRanges...), env.LocalProxies...)}
+		srv["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
 		if len(skip) > 0 {
 			srv["automatic_https"] = obj{"skip": skip}
 		}
@@ -175,10 +175,10 @@ func Render(sites []Site, env Env) ([]byte, error) {
 		if len(httpLoggerNames) > 0 {
 			srv["logs"] = obj{"logger_names": httpLoggerNames}
 		}
-		if realIP {
-			srv["trusted_proxies"] = obj{"source": "static", "ranges": CloudflareRanges}
-			srv["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
-		}
+		// the visitor's address, not the proxy's: Cloudflare (orange cloud) and a tunnel's
+		// cloudflared on the edge network both pass it on; nobody else can send from these ranges
+		srv["trusted_proxies"] = obj{"source": "static", "ranges": append(append([]string{}, CloudflareRanges...), env.LocalProxies...)}
+		srv["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
 		servers["http"] = srv
 	}
 
@@ -267,8 +267,31 @@ func siteRoutes(s Site, env Env) []any {
 			})
 		}
 	}
+	// other names that send visitors on to the primary one, path and query kept
+	serve := s.Domains
+	if rd := s.Options.Redirect; rd != nil && len(rd.Hosts) > 0 && len(s.Domains) > 0 {
+		code := rd.Code
+		if code == 0 {
+			code = 301
+		}
+		scheme := "https://"
+		if s.TLS.Mode == "off" {
+			scheme = "http://"
+		}
+		out = append(out, obj{
+			"match":    []any{obj{"host": rd.Hosts}},
+			"handle":   []any{redirect(scheme+s.Domains[0]+"{http.request.uri}", code)},
+			"terminal": true,
+		})
+		serve = nil
+		for _, d := range s.Domains {
+			if !slices.Contains(rd.Hosts, d) {
+				serve = append(serve, d)
+			}
+		}
+	}
 	out = append(out, obj{
-		"match":    []any{obj{"host": s.Domains}},
+		"match":    []any{obj{"host": serve}},
 		"handle":   []any{obj{"handler": "subroute", "routes": inner(s, env)}},
 		"terminal": true,
 	})
@@ -282,10 +305,8 @@ func redirect(loc string, code int) obj {
 func inner(s Site, env Env) []any {
 	o := s.Options
 	var r []any
-	ipMatcher := "remote_ip"
-	if o.RealIPCF {
-		ipMatcher = "client_ip"
-	}
+	// the visitor's address (through Cloudflare or a tunnel too; see trusted_proxies)
+	ipMatcher := "client_ip"
 	// 1. IP rules
 	if len(o.DenyIPs) > 0 {
 		r = append(r, obj{"match": []any{obj{ipMatcher: obj{"ranges": o.DenyIPs}}},
