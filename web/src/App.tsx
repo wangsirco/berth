@@ -44,6 +44,8 @@ const Dev = lazy(() => import('./pages/dev/DevPage'))
 const Remote = lazy(() => import('./pages/remote/RemotePage'))
 const System = lazy(() => import('./pages/system/SystemPage'))
 const RemoteViewer = lazy(() => import('./pages/remote/ViewerPage'))
+const VmScreen = lazy(() => import('./pages/vms/ScreenPage'))
+const PveScreen = lazy(() => import('./pages/vms/PveScreenPage'))
 const AcceptInvite = lazy(() => import('./pages/invite/AcceptInvitePage'))
 const SharedViewer = lazy(() => import('./pages/remote/SharedViewer'))
 const Proxy = lazy(() => import('./pages/proxy/ProxyPage'))
@@ -65,6 +67,8 @@ export default function App() {
         <Route path="/cli-auth" element={<RequireAuth><CliAuth /></RequireAuth>} />
         <Route path="/welcome" element={<RequireAuth><Welcome /></RequireAuth>} />
         <Route path="/remote/:id" element={<RequireAuth><RemoteViewer /></RequireAuth>} />
+        <Route path="/vm-screen/:host/:name" element={<RequireAuth><VmScreen /></RequireAuth>} />
+        <Route path="/pve-screen/:cluster/:node/:type/:vmid" element={<RequireAuth><PveScreen /></RequireAuth>} />
         <Route path="/wharf/paired" element={<RequireAuth><WharfPaired /></RequireAuth>} />
         <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
         <Route path="/wall" element={<RequireAuth><Wall /></RequireAuth>} />

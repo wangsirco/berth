@@ -2,6 +2,47 @@
 
 简体中文在前，English below each version.
 
+## 1.3.0 · 2026-11-22
+
+**虚拟机「画面」：像 VMware / PVE 的控制台，开在单独的窗口里**
+- 能看到虚拟机的屏幕：固件、开机过程、登录界面、网络没起来时的报错，全都看得到。虚拟机重启或开机时画面自动重连。
+- 默认只看：鼠标划过不会被抓走；点一下画面才把键盘和鼠标交给虚拟机，点画面外面就交还，顶栏标明当前是「只看」还是「在操作」。
+- 顶栏：Ctrl+Alt+Del、截图、画中画（浮在所有窗口上面，一边看一边干别的；Chrome / Edge）、全屏、断开 / 重连。
+- 右侧工具栏：
+  - 虚拟机状态、地址、规格、内存占用、已运行时长，重启 / 关机 / 强制关机。
+  - 登录：「键入 root」「键入密码」，密码直接输进虚拟机，屏幕上不显示。
+  - 常用按键（Ctrl+C / D / Z / L、Esc、Tab、↑）和 Ctrl+Alt+F1–F6 切换文字控制台。
+  - 命令库（和终端同一个，「插入」或「运行」）；任意文字一个键一个键地输进去，登录界面和控制台也能用。
+- PVE 的虚拟机和容器也用这个窗口：电源按 PVE 的接口操作，浏览器不用登录 PVE，也不用信任它的证书。
+- 之前建的虚拟机点「启用画面」（会关机再开机一次）。ARM 上 Incus 的串口控制台本来就用不了，已去掉。
+
+**虚拟机网络与登录**
+- 修复：虚拟机改成「局域网独立 IP」后一直「等待路由器分配」、终端打不开。其实路由器早就分了地址，是虚拟机里的 SELinux 拦住了 incus-agent，面板读不到。新建的虚拟机自带开机自检，SELinux 一开就自动放行；已经这样的，详情和画面里都有一键修复。
+- 地址后标注「NAT 内部」或「局域网」，10.x 的内部地址不会再看着像出错；读不到地址时直接说明并给出 MAC。
+- 新建时可选 root 的登录方式：勾选账号里的公钥、另外粘贴一把、自动生成或自己设置密码、是否允许用密码 SSH 登录。
+- 建好后弹出地址、用户和密码，只显示这一次。
+
+**稳定性**
+- 修复：面板查询虚拟机时偶尔把整个 Incus 卡死（所有 incus 命令都不返回，只能重启服务）。
+- 启用画面时先正常关机（60 秒没关再强制），设置好再开回来；中途出错也会开回来。
+
+---
+
+- **VM screen, in its own window like a VMware / PVE console:** firmware, boot, login prompt and network errors all visible; reconnects by itself across restarts.
+- Watch-only until you click the screen; a click outside gives keyboard and mouse back.
+- **Toolbar:** Ctrl+Alt+Del, screenshot, picture-in-picture (floats above other windows), full screen.
+- **Side panel:**
+  - state, address and power;
+  - type root / the password (never shown);
+  - common keys and Ctrl+Alt+F1–F6;
+  - the command library;
+  - typing any text key by key.
+- PVE guests open in the same window.
+- Fix: a VM switched to its own LAN address stayed on "waiting for the router" and its shell would not open: SELinux in the VM blocked incus-agent. New VMs guard against it; existing ones get a one-click fix.
+- Addresses are labelled NAT or LAN.
+- Choose root's keys and password when creating a VM; the login is shown once afterwards.
+- Fix: the panel's polling could freeze the whole Incus API.
+
 ## 1.2.1 · 2026-11-22
 
 **代理**

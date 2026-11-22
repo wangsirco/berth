@@ -82,8 +82,9 @@ func randomPassword(n int) string {
 	return string(b)
 }
 
-// cloudInit builds user-data: SSH server, the person's keys for root, and a password.
-func cloudInit(osName string, keys []string, password string) string {
+// cloudInit builds user-data: SSH server, keys for root, a password (for the console, and
+// for SSH when pwSSH), and the SELinux fix incus-agent needs on Fedora-like systems.
+func cloudInit(osName string, keys []string, password string, pwSSH bool) string {
 	pkg := "openssh-server"
 	if osName == "alpine" {
 		pkg = "openssh"
@@ -92,21 +93,21 @@ func cloudInit(osName string, keys []string, password string) string {
 	b.WriteString("#cloud-config\n")
 	b.WriteString("packages: [" + pkg + "]\n")
 	b.WriteString("disable_root: false\n")
+	b.WriteString("ssh_pwauth: " + map[bool]string{true: "true", false: "false"}[pwSSH] + "\n")
 	if len(keys) > 0 {
-		b.WriteString("ssh_pwauth: false\n")
 		b.WriteString("users:\n  - name: root\n    ssh_authorized_keys:\n")
 		for _, k := range keys {
 			b.WriteString("      - " + jsonString(k) + "\n")
 		}
-	} else {
-		b.WriteString("ssh_pwauth: true\n")
 	}
 	if password != "" {
 		b.WriteString("chpasswd:\n  expire: false\n  users:\n    - name: root\n      password: " + jsonString(password) + "\n      type: text\n")
 	}
+	wf, guard := incus.AgentGuard()
+	b.WriteString(wf)
 	// the SSH service has different names; enable whichever exists
-	b.WriteString("runcmd:\n  - [sh, -c, \"(systemctl enable --now ssh || systemctl enable --now sshd || (rc-update add sshd && rc-service sshd start)) 2>/dev/null; true\"]\n")
-	if len(keys) == 0 {
+	b.WriteString("runcmd:\n" + guard + "  - [sh, -c, \"(systemctl enable --now ssh || systemctl enable --now sshd || (rc-update add sshd && rc-service sshd start)) 2>/dev/null; true\"]\n")
+	if pwSSH {
 		b.WriteString("  - [sh, -c, \"sed -i 's/^#\\\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config; (systemctl restart ssh || systemctl restart sshd || rc-service sshd restart) 2>/dev/null; true\"]\n")
 	}
 	return b.String()
@@ -140,7 +141,7 @@ func init() {
 				rows.Close()
 			}
 			writeJSON(w, 200, map[string]any{"status": st.Status, "images": st.Images, "items": items, "has_password": pw,
-				"sizes": vmSizes, "my_keys": len(a.sshKeys(currentUser(r).ID))})
+				"sizes": vmSizes, "my_keys": len(a.sshKeys(currentUser(r).ID)), "agent_fix": incus.AgentFixCommand()})
 		}))
 		mux.HandleFunc("POST /api/v1/hosts/{host}/vms/{name}/password", a.authed("vms.manage", func(w http.ResponseWriter, r *http.Request) {
 			if err := a.requireReauth(r); err != nil {
@@ -217,8 +218,14 @@ func init() {
 
 	createProps := map[string]change.Prop{"name": {Type: "string"}, "image": {Type: "string"}, "vm": {Type: "boolean", Desc: "full virtual machine instead of a system container"},
 		"size": {Type: "string", Enum: []string{"small", "medium", "large", "custom"}}, "cpus": {Type: "integer"}, "memory_mb": {Type: "integer"}, "disk_gb": {Type: "integer"},
-		"note": {Type: "string"}}
+		"note": {Type: "string"}, "key_ids": {Type: "array", Desc: "which of my SSH keys go to root (default: all)"},
+		"ssh_key": {Type: "string", Desc: "another public key for root"}, "password": {Type: "string", Desc: "root password (default: generated)"},
+		"password_ssh": {Type: "boolean", Desc: "allow SSH login as root with the password (default: only when no key)"}}
 	type createParams struct {
+		KeyIDs      *[]int64 `json:"key_ids"`
+		SSHKey      string   `json:"ssh_key"`
+		Password    string   `json:"password"`
+		PasswordSSH *bool    `json:"password_ssh"`
 		Name     string `json:"name"`
 		Image    string `json:"image"`
 		VM       bool   `json:"vm"`
@@ -256,13 +263,20 @@ func init() {
 		if p.VM && p.MemoryMB < 512 {
 			return p, img, errs.New(400, "vm.bad_size")
 		}
+		p.SSHKey = strings.TrimSpace(strings.ReplaceAll(p.SSHKey, "\r", ""))
+		if p.SSHKey != "" && !sshKeyRe.MatchString(p.SSHKey) {
+			return p, img, errs.New(400, "vm.bad_ssh_key")
+		}
+		if p.Password != "" && (len(p.Password) < 8 || len(p.Password) > 128 || strings.ContainsAny(p.Password, "\r\n")) {
+			return p, img, errs.New(400, "vm.bad_password")
+		}
 		return p, img, nil
 	}
 
 	change.Register(change.Kind{
 		Name: "vm.create", Perm: "vms.manage", Scope: "system:write", Title: "kind.vm.create",
 		Params: change.ParamSchema{Props: createProps, Required: []string{"name", "image"}}, CLI: "berth vm create {{.name}} --image {{.image}}",
-		Heavy: true, MemMB: 128,
+		Heavy: true, MemMB: 128, Redact: []string{"password"},
 		MemFor: func(raw json.RawMessage) int { // the new machine's memory must fit too
 			var p createParams
 			json.Unmarshal(raw, &p)
@@ -309,18 +323,38 @@ func init() {
 				return nil, nil, err
 			}
 			var keys []string
+			var uid int64
 			if env.ActorType == "user" {
-				var uid int64
 				fmt.Sscanf(env.ActorID, "%d", &uid)
-				keys = a.sshKeyLines(uid)
+				pick := map[int64]bool{}
+				if p.KeyIDs != nil {
+					for _, id := range *p.KeyIDs {
+						pick[id] = true
+					}
+				}
+				for _, k := range a.sshKeys(uid) {
+					if p.KeyIDs == nil || pick[k["id"].(int64)] {
+						keys = append(keys, k["full"].(string))
+					}
+				}
+			}
+			if p.SSHKey != "" {
+				keys = append(keys, p.SSHKey)
 			}
 			password := ""
 			if img.Cloud {
-				password = randomPassword(16)
+				password = p.Password
+				if password == "" {
+					password = randomPassword(16)
+				}
+			}
+			pwSSH := len(keys) == 0
+			if p.PasswordSSH != nil {
+				pwSSH = *p.PasswordSSH
 			}
 			spec := incus.CreateSpec{Name: p.Name, Image: img.Alias, VM: p.VM, CPUs: p.CPUs, MemoryMB: p.MemoryMB, DiskGB: p.DiskGB, Note: p.Note, Start: true}
 			if img.Cloud {
-				spec.UserData = cloudInit(img.OS, keys, password)
+				spec.UserData = cloudInit(img.OS, keys, password, pwSSH)
 			}
 			if err := a.streamAgent(env, env.Host, "/v1/vms", spec, nil); err != nil {
 				return nil, nil, err
@@ -328,10 +362,13 @@ func init() {
 			if password != "" {
 				enc, _ := a.seal([]byte(password))
 				a.db.Exec(`INSERT OR REPLACE INTO vm_secrets(host, name, password_enc, created_at) VALUES(?,?,?,?)`, env.Host, p.Name, enc, time.Now().Unix())
+				if uid != 0 {
+					rememberFirstLogin(env.Host, p.Name, password, uid)
+				}
 			}
 			a.relate(env.Host, change.Object{Type: "host", ID: env.Host}, change.Object{Type: "vm", ID: p.Name, Name: p.Name}, "manages", "module")
 			u, _ := json.Marshal(map[string]string{"name": p.Name})
-			return map[string]any{"name": p.Name, "ssh_keys": len(keys), "password": password != ""}, &change.UndoRecipe{Kind: "vm.delete", Params: u}, nil
+			return map[string]any{"name": p.Name, "ssh_keys": len(keys), "password": password != "", "password_ssh": pwSSH && password != ""}, &change.UndoRecipe{Kind: "vm.delete", Params: u}, nil
 		},
 	})
 

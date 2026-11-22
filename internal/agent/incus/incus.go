@@ -36,10 +36,18 @@ func firstExisting(paths ...string) string {
 type Client struct{ hc *http.Client }
 
 func New() *Client {
-	return &Client{hc: &http.Client{Timeout: 10 * time.Minute, Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", Socket)
-		}}}}
+	return &Client{hc: &http.Client{Timeout: 10 * time.Minute, Transport: incusTransport()}}
+}
+
+// incusTransport opens one connection per request and closes it after. With a pool, Go
+// sometimes dials a connection that another request's freed one makes unneeded and parks it
+// idle without sending a byte; incusd's unix listener waits in Accept for the first bytes of
+// every new connection, so that one silent connection blocks the whole Incus API (every
+// incus command hangs) until it is used or closed. Seen on 6.23 under the panel's polling.
+func incusTransport() *http.Transport {
+	return &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", Socket)
+	}}
 }
 
 // Error is Incus's own message.
@@ -150,6 +158,11 @@ type Instance struct {
 	Forwards    []Forward         `json:"forwards"`
 	Net         NetState          `json:"net"`
 	Perms       Perms             `json:"perms"`
+	// VMs: a VNC screen the panel can open (see VNCArg), and whether incus-agent answers
+	// inside (without it Incus knows no addresses outside NAT, and the shell cannot open).
+	VNC    bool  `json:"vnc,omitempty"`
+	Agent  bool  `json:"agent"`
+	Booted int64 `json:"booted_at,omitempty"` // unix seconds the machine last started
 }
 
 type Snapshot struct {
@@ -173,8 +186,10 @@ type rawInstance struct {
 	CreatedAt       time.Time                    `json:"created_at"`
 	Config          map[string]string            `json:"config"`
 	ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	LastUsedAt      time.Time                    `json:"last_used_at"`
 	State           *struct {
-		Memory struct {
+		Processes int `json:"processes"`
+		Memory    struct {
 			Usage int64 `json:"usage"`
 		} `json:"memory"`
 		CPU struct {
@@ -219,7 +234,14 @@ func (r rawInstance) convert() Instance {
 			in.Forwards = append(in.Forwards, f)
 		}
 	}
+	if r.Type == "virtual-machine" {
+		in.VNC = r.Config["raw.qemu"] == VNCArg(r.Name)
+	}
+	if r.Status == "Running" && !r.LastUsedAt.IsZero() {
+		in.Booted = r.LastUsedAt.Unix()
+	}
 	if s := r.State; s != nil {
+		in.Agent = r.Type != "virtual-machine" || s.Processes >= 0
 		in.MemUsed, in.CPUNs = s.Memory.Usage, s.CPU.Usage
 		if d, ok := s.Disk["root"]; ok {
 			in.DiskUsed = d.Usage
@@ -306,6 +328,7 @@ func (c *Client) Create(ctx context.Context, s CreateSpec) error {
 	cfg := map[string]string{"limits.cpu": fmt.Sprint(s.CPUs), "limits.memory": fmt.Sprintf("%dMiB", s.MemoryMB), "user.berth": "1"}
 	if s.VM {
 		cfg["security.secureboot"] = "false" // Fedora's ARM firmware has no Microsoft-key variant
+		cfg["raw.qemu"] = VNCArg(s.Name)
 	}
 	if s.UserData != "" {
 		cfg["cloud-init.user-data"] = s.UserData
@@ -382,7 +405,60 @@ func (c *Client) Clone(ctx context.Context, from, to string) error {
 	if err != nil {
 		return err
 	}
-	return c.wait(ctx, e)
+	if err := c.wait(ctx, e); err != nil {
+		return err
+	}
+	// the copy's screen gets its own socket, not the original's
+	if raw, err := c.raw(ctx, to); err == nil {
+		if cfg, _ := raw["config"].(map[string]any); cfg["raw.qemu"] == VNCArg(from) {
+			return c.patch(ctx, to, map[string]any{"config": map[string]string{"raw.qemu": VNCArg(to)}})
+		}
+	}
+	return nil
+}
+
+// VNCSocket is where a VM's screen is served: QEMU's own VNC server on a Unix socket in the
+// VM's run directory (root only), relayed to the panel's noVNC. Incus' own graphical
+// console is SPICE, which browsers cannot speak, and its text console does not work on
+// ARM (the PL011 serial port cannot be re-attached: "Chardev user does not support
+// chardev hotswap").
+func VNCSocket(name string) string { return "/run/incus/" + name + "/vnc.sock" }
+
+// VNCArg is the raw.qemu that adds the screen.
+func VNCArg(name string) string { return "-vnc unix:" + VNCSocket(name) }
+
+// EnableVNC adds the screen; it shows up at the next start.
+func (c *Client) EnableVNC(ctx context.Context, name string) error {
+	return c.patch(ctx, name, map[string]any{"config": map[string]string{"raw.qemu": VNCArg(name)}})
+}
+
+// AgentPolicy is the SELinux module (CIL) incus-agent needs on Fedora-like guests. The
+// agent runs as init_t (its binary is copied to /run at boot), which may not listen on a
+// vsock or make /dev/incus/sock. Without the agent Incus knows no address outside NAT, no
+// shell opens, and cloud-init (which reads /dev/incus/sock) gets nothing new.
+const AgentPolicy = "(allow init_t self (vsock_socket (listen accept)))\n" +
+	"(allow init_t device_t (dir (create add_name remove_name write search)))\n" +
+	"(allow init_t device_t (sock_file (create unlink setattr getattr write)))\n"
+
+// AgentFixCommand is what to run inside a guest whose agent SELinux stopped.
+func AgentFixCommand() string {
+	return "printf '" + strings.ReplaceAll(AgentPolicy, "\n", "\\n") + "' > /root/berth-incus-agent.cil && semodule -i /root/berth-incus-agent.cil && systemctl reset-failed incus-agent; systemctl restart incus-agent"
+}
+
+// AgentGuard is cloud-config for new machines: the module and a boot unit that loads it
+// (once) before incus-agent starts, whenever SELinux is on — it often comes later, with a
+// package that pulls the policy in, when cloud-init can no longer help.
+func AgentGuard() (writeFiles, runcmd string) {
+	var b strings.Builder
+	b.WriteString("write_files:\n  - path: /etc/berth/berth-incus-agent.cil\n    content: |\n")
+	for _, l := range strings.Split(strings.TrimSpace(AgentPolicy), "\n") {
+		b.WriteString("      " + l + "\n")
+	}
+	b.WriteString("  - path: /etc/systemd/system/berth-incus-agent-selinux.service\n    content: |\n" +
+		"      [Unit]\n      Description=Let incus-agent run under SELinux (Berth)\n      Before=incus-agent.service\n      ConditionPathExists=/sys/fs/selinux/enforce\n" +
+		"      [Service]\n      Type=oneshot\n      ExecStart=/bin/sh -c 'semodule -l | grep -qx berth-incus-agent || semodule -i /etc/berth/berth-incus-agent.cil'\n" +
+		"      [Install]\n      WantedBy=multi-user.target incus-agent.service\n")
+	return b.String(), "  - [sh, -c, \"systemctl daemon-reload; systemctl enable berth-incus-agent-selinux.service; true\"]\n"
 }
 
 // patch merges config and devices (a nil device value removes it).
@@ -449,9 +525,7 @@ func ImportBackup(ctx context.Context, name string, r io.Reader) error {
 	if !nameRe.MatchString(name) {
 		return errs.New(400, "vms.bad_name")
 	}
-	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", Socket)
-	}}}
+	hc := &http.Client{Transport: incusTransport()}
 	req, err := http.NewRequestWithContext(ctx, "POST", "http://incus/1.0/instances", r)
 	if err != nil {
 		return err

@@ -540,10 +540,15 @@ await spec('vms', async () => {
   // the new-machine form with its defaults: Debian 13, system container, small
   await page.goto(`${BASE}/local/vms`)
   await click(btn('新建'))
-  await waitText('会装好 SSH，并带上你在“账号”里保存的 1 把公钥')
+  await waitText('SSH 公钥') // the login section lists the saved key, ticked
+  await waitText('e2e-vm')
   await fill('名称', 'e2e-debian')
   await click(btn('创建'))
   await click('[data-testid=confirm]:not([disabled])', 15000)
+  // the root login is shown once right after
+  await waitText('e2e-debian 建好了', 240000)
+  await waitText('密码只在这里显示这一次')
+  assert(await page.evaluate(() => [...document.querySelectorAll('[role=dialog]')].some((d) => d.textContent.includes('建好了') && /root 密码[A-Za-z2-9]{16}/.test(d.textContent))), 'no password in the made dialog')
   const ip = sh('ssh', [HOST, "for i in $(seq 1 80); do a=$(incus list e2e-debian -c 4 -f csv | cut -d' ' -f1); [ -n \"$a\" ] && echo $a && break; sleep 3; done"]).trim()
   assert(/^10\.42\./.test(ip), 'no address: ' + ip)
   // cloud-init installs the SSH server; then the saved key just works
@@ -586,6 +591,79 @@ await spec('vms', async () => {
   const del = await change('vm.delete', { name: 'e2e-debian' })
   assert(del.status === 'done', 'delete')
   assert(!sh('ssh', [HOST, 'incus list -c n -f csv']).includes('e2e-debian'), 'still there')
+})
+
+await spec('vm-screen', async () => {
+  // the dev server keeps a small Fedora VM t-vnc made with a screen; open it like PVE's console
+  if (!sh('ssh', [HOST, 'incus list -c n -f csv 2>/dev/null; true']).split('\n').includes('t-vnc')) { console.log('    skipped: no t-vnc VM on this host'); return }
+  // a running VM made before screens existed: turning it on must stop, set and start it again
+  sh('ssh', [HOST, 'incus stop -f t-vnc 2>/dev/null; incus config unset t-vnc raw.qemu; incus start t-vnc'])
+  const en = await change('vm.screen.enable', { name: 't-vnc' })
+  assert(en.status === 'done', 'screen enable on a running VM: ' + JSON.stringify(en.result ?? en.error ?? en))
+  assert(sh('ssh', [HOST, 'incus list t-vnc -c s -f csv; incus config get t-vnc raw.qemu']).includes('RUNNING\n-vnc unix:/run/incus/t-vnc/vnc.sock'), 'not running with a screen')
+  await page.goto(`${BASE}/local/vms`)
+  await click(`::-p-xpath(//div[contains(@class,"font-semibold")][starts-with(normalize-space(.),"t-vnc ")])`)
+  // 画面 opens its own window
+  const popped = new Promise((ok) => browser.once('targetcreated', (tg) => ok(tg)))
+  await click('::-p-xpath(//*[@role="dialog"]//button[normalize-space(.)="画面"])')
+  const tg = await Promise.race([popped, sleep(10000).then(() => null)])
+  assert(tg && tg.url().includes('/vm-screen/local/t-vnc'), 'no screen window: ' + (tg && tg.url()))
+  const win = await tg.page()
+  if (win) await win.close()
+  await page.keyboard.press('Escape')
+  // the screen page itself
+  await page.goto(`${BASE}/vm-screen/local/t-vnc`)
+  await page.waitForSelector('[data-screen-state=connected]', { timeout: 30000 })
+  await page.waitForFunction(() => { const c = document.querySelector('[data-vnc-screen] canvas'); return c && c.width >= 640 }, { timeout: 20000 })
+  await page.waitForSelector('[data-control=off]') // watching until clicked
+  await waitText('点击画面开始操作')
+  const cv = await page.$('[data-vnc-screen] canvas')
+  const bb = await cv.boundingBox()
+  await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2)
+  await page.waitForSelector('[data-control=on]', { timeout: 5000 })
+  await page.keyboard.press('Enter') // wakes a blanked console
+  await page.waitForFunction(() => {
+    const c = document.querySelector('[data-vnc-screen] canvas')
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+    let lit = 0
+    for (let k = 0; k < d.length; k += 16) if (d[k] + d[k + 1] + d[k + 2] > 120) lit++
+    return lit > 50
+  }, { timeout: 20000 })
+  // the side panel: a click there hands keyboard and mouse back; its keys type into the VM
+  await click(btn('键入 root ↵'))
+  await page.waitForSelector('[data-control=off]', { timeout: 5000 })
+  // the panel's keys must reach the VM although the screen is only watched now: an empty
+  // password fails root's login, then a made-up user name typed from the panel shows up in
+  // the VM's own log as a failed login
+  // proof: on a fresh text console (the panel's F2), log in and make a file, all typed from
+  // the panel; the file then exists in the VM. The fixture's root gets a throwaway password.
+  const pw = 'E2e-' + Math.random().toString(36).slice(2, 10) + '!X'
+  const mark = '/tmp/e2e-keys-' + Math.random().toString(36).slice(2, 8)
+  sh('ssh', [HOST, 'for i in $(seq 1 45); do incus exec t-vnc -- true 2>/dev/null && break; sleep 2; done']) // the agent, after the restart above
+  sh('ssh', [HOST, `incus exec t-vnc -- sh -c 'echo "root:${pw}" | chpasswd'`])
+  const typeLine = async (s) => {
+    await page.$eval('aside textarea', (el) => { el.focus(); el.select() })
+    await page.keyboard.press('Backspace')
+    await page.type('aside textarea', s)
+    await click(btn('输入并回车'))
+  }
+  await click('::-p-xpath(//button[@title="Ctrl+Alt+F2"])')
+  await sleep(2500)
+  await typeLine('root')
+  await sleep(1500)
+  await typeLine(pw)
+  await sleep(4000)
+  await typeLine(`touch ${mark} && exit`)
+  let made = ''
+  for (let k = 0; k < 10 && !made.includes('yes'); k++) { await sleep(1500); made = sh('ssh', [HOST, `incus exec t-vnc -- sh -c 'test -e ${mark} && echo yes; true'`]) }
+  await click('::-p-xpath(//button[@title="Ctrl+Alt+F1"])')
+  sh('ssh', [HOST, `incus exec t-vnc -- sh -c 'rm -f ${mark}; passwd -l root >/dev/null'`])
+  assert(made.includes('yes'), 'keys typed from the side panel did not reach the VM')
+  await waitText('切换文字控制台')
+  await waitText('命令库')
+  await sleep(1500)
+  await page.screenshot({ path: OUT + 'vm-screen.png' })
+  sh('ssh', [HOST, 'incus stop --timeout 30 t-vnc 2>/dev/null || incus stop -f t-vnc 2>/dev/null; true']) // a fixture: off between runs
 })
 
 await spec('remote-desktop', async () => {
@@ -2590,11 +2668,19 @@ await spec('pve', async () => {
     for (let k = 0; k < 3 && (await page.$$('[role=dialog]')).length > 0; k++) { await page.keyboard.press('Escape'); await sleep(400) }
     // the VM's console: noVNC through the panel, a real frame drawn
     await clickAgain('[data-pve-guest="100"]')
-    await click('[role=dialog] ' + btn('控制台'))
-    await page.waitForSelector('[data-console-state="connected"]', { timeout: 20000 })
-    await page.waitForFunction(() => { const c = document.querySelector('[data-pve-console] canvas'); return c && c.width >= 640 }, { timeout: 15000 })
+    // the console opens the same screen window as Berth's own VMs
+    const popped = new Promise((ok) => browser.once('targetcreated', (tg) => ok(tg)))
+    await click('[role=dialog] ' + btn('画面'))
+    const tg = await Promise.race([popped, sleep(10000).then(() => null)])
+    assert(tg && tg.url().includes('/pve-screen/127-0-0-1-18006/'), 'no PVE screen window: ' + (tg && tg.url()))
+    const win = await tg.page()
+    await win.setViewport({ width: 1280, height: 800 })
+    await win.waitForSelector('[data-screen-state=connected]', { timeout: 20000 })
+    await win.waitForFunction(() => { const c = document.querySelector('[data-vnc-screen] canvas'); return c && c.width >= 640 }, { timeout: 15000 })
+    await win.waitForFunction(() => document.body.innerText.includes('命令库') && document.body.innerText.includes('PVE'), { timeout: 10000 })
     await sleep(800)
-    await page.screenshot({ path: OUT + 'pve-console.png' })
+    await win.screenshot({ path: OUT + 'pve-console.png' })
+    await win.close()
     for (let k = 0; k < 4 && (await page.$$('[role=dialog]')).length > 0; k++) { await page.keyboard.press('Escape'); await sleep(400) }
     // power with undo through the API: stop → start back
     const st = await change('pve.power', { cluster: '127-0-0-1-18006', node: 'pve1', type: 'lxc', vmid: 101, name: 'db', action: 'shutdown' })

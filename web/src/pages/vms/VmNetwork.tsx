@@ -15,7 +15,7 @@ export interface VmNet { mode: NetMode; parent?: string; egress: 'all' | 'lan' |
 export interface VmShare { id: string; source: string; path: string; readonly: boolean }
 export interface VmPerms { autostart: boolean; nesting: boolean; privileged: boolean; shares: VmShare[] }
 export interface Fwd { name: string; proto: string; host_port: number; target_port: number }
-export interface NetInst { name: string; type: 'container' | 'virtual-machine'; status: string; ipv4: string[]; forwards: Fwd[]; net?: VmNet; perms?: VmPerms }
+export interface NetInst { name: string; type: 'container' | 'virtual-machine'; status: string; ipv4: string[]; forwards: Fwd[]; net?: VmNet; perms?: VmPerms; agent?: boolean; booted_at?: number }
 interface LanPort { name: string; wireless: boolean; bridge: boolean; up: boolean; address?: string; default: boolean }
 
 const MODES: { mode: Exclude<NetMode, 'custom'>; Icon: typeof Router }[] = [{ mode: 'nat', Icon: Router }, { mode: 'lan', Icon: Network }, { mode: 'isolated', Icon: Unplug }]
@@ -73,7 +73,7 @@ export function NetworkBox({ inst: i, manage }: { inst: NetInst; manage: boolean
         {net.mode === 'lan' && (
           <div className="space-y-1 text-[12.5px]">
             <div><span className="text-mute">{t('vmnet.lan_port')}</span> <b className="num">{net.parent}</b></div>
-            <div><span className="text-mute">{t('vms.address')}</span> <b className="num">{i.ipv4[0] ?? t('vmnet.lan_waiting')}</b></div>
+            <div><span className="text-mute">{t('vms.address')}</span> <b className="num">{i.ipv4[0] ?? (i.agent === false && i.status === 'Running' && !!i.booted_at && Date.now() / 1000 - i.booted_at > 90 ? t('vms.addr_unknown') : t('vmnet.lan_waiting'))}</b></div>
             {net.mac && <div><span className="text-mute">MAC</span> <span className="num select-all">{net.mac}</span></div>}
             <p className="text-mute">{t('vmnet.lan_tip')}</p>
           </div>

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import RFB from '@novnc/novnc'
+import { useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
+import { openPveScreen } from './PveScreenPage'
 import { Button } from '@/components/ui/Button'
 import { Dialog, Drawer } from '@/components/ui/Dialog'
 import { Box, Dot, Empty, Notice, Pill, Row } from '@/components/ui/Box'
@@ -126,7 +126,6 @@ function GuestDrawer({ c, g, onClose }: { c: Cluster; g: Guest; onClose: () => v
   const manage = can(user, 'vms.manage')
   const d = useApi<Detail>(`/api/v1/pve/${c.id}/guests/${g.node}/${g.type}/${g.vmid}`, [c.id, g.vmid, g.status])
   useEvents(['change.done'], (_, ch) => { if (String(ch?.kind ?? '').startsWith('pve.')) void d.reload() })
-  const [showConsole, setConsole] = useState(false)
   const [site, setSite] = useState<string | null>(null)
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '').replace(/^(\d{8})(\d{4})$/, '$1-$2')
   const [snap, setSnap] = useState('berth-' + stamp)
@@ -141,7 +140,7 @@ function GuestDrawer({ c, g, onClose }: { c: Cluster; g: Guest; onClose: () => v
       <div className="space-y-4 p-4">
         {manage && <div className="flex flex-wrap gap-2">
           {on ? <>
-            <Button size="sm" variant="primary" onClick={() => setConsole(true)}>{t('pve.console')}</Button>
+            <Button size="sm" variant="primary" title={t('vms.screen_d')} onClick={() => openPveScreen(c.id, g)}>{t('pve.console')}</Button>
             <Button size="sm" onClick={() => run('pve.power', { ...r, action: 'shutdown' })}>{t('pve.shutdown')}</Button>
             <Button size="sm" onClick={() => run('pve.power', { ...r, action: 'reboot' })}>{t('pve.reboot')}</Button>
             <Button size="sm" variant="ghost" onClick={() => run('pve.power', { ...r, action: 'stop' })}>{t('pve.stop')}</Button>
@@ -181,42 +180,8 @@ function GuestDrawer({ c, g, onClose }: { c: Cluster; g: Guest; onClose: () => v
           </div>
         </Box>
       </div>
-      {showConsole && <ConsoleDialog c={c} g={g} onClose={() => setConsole(false)} />}
       {site && <NewSiteDialog preset={{ type: 'address', upstreams: [site] }} onClose={() => setSite(null)} onDone={() => setSite(null)} />}
     </Drawer>
-  )
-}
-
-// ConsoleDialog: noVNC, through the panel (the browser needs no PVE login and no trust in its certificate)
-function ConsoleDialog({ c, g, onClose }: { c: Cluster; g: Guest; onClose: () => void }) {
-  const t = useT()
-  const box = useRef<HTMLDivElement>(null)
-  const rfb = useRef<RFB | null>(null)
-  const [state, setState] = useState<'connecting' | 'connected' | 'closed'>('connecting')
-  const [err, setErr] = useState('')
-  useEffect(() => {
-    let gone = false
-    post<{ key: string; password: string }>(`/api/v1/pve/${c.id}/guests/${g.node}/${g.type}/${g.vmid}/console`, {}).then((tk) => {
-      if (gone || !box.current) return
-      const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/pve/console/${tk.key}`
-      const r = new RFB(box.current, url, { credentials: { password: tk.password }, wsProtocols: ['binary'] })
-      r.scaleViewport = true
-      r.background = '#000'
-      r.addEventListener('connect', () => setState('connected'))
-      r.addEventListener('disconnect', () => setState('closed'))
-      r.addEventListener('credentialsrequired', () => r.sendCredentials({ password: tk.password }))
-      rfb.current = r
-    }).catch((e) => setErr(errText(e)))
-    return () => { gone = true; rfb.current?.disconnect() }
-  }, [c.id, g.node, g.type, g.vmid])
-  return (
-    <Dialog open wide onOpenChange={(o) => !o && onClose()} title={`${t('pve.console')} · ${g.name || g.vmid}`}
-      footer={<><span className="text-[12px] text-mute" data-console-state={state}>{t('pve.console_' + state)}</span>
-        <Button className="ml-auto" size="sm" disabled={state !== 'connected'} onClick={() => rfb.current?.sendCtrlAltDel()}>Ctrl+Alt+Del</Button>
-        <Button size="sm" onClick={onClose}>{t('common.close')}</Button></>}>
-      {err && <div className="p-3"><Notice tone="bad">{err}</Notice></div>}
-      <div ref={box} className="h-[60vh] w-full bg-black" data-pve-console />
-    </Dialog>
   )
 }
 

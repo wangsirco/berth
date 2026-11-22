@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useChange } from '@/components/change/ChangeDialog'
 import { useHost } from '@/components/shell/host'
 import { Button } from '@/components/ui/Button'
 import { Dialog, Drawer } from '@/components/ui/Dialog'
 import { Box, Dot, Empty, Notice, Pill, Row } from '@/components/ui/Box'
-import { Field, Input, Segmented } from '@/components/ui/Field'
+import { Field, Input, Segmented, Textarea } from '@/components/ui/Field'
 import { cx } from '@/components/ui/cx'
 import { errText, post } from '@/lib/api'
 import { can, useAuth } from '@/lib/auth'
@@ -15,8 +15,10 @@ import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
 import { requestTerminal } from '@/pages/terminal/store'
 import { NewSiteDialog } from '@/pages/sites/NewSiteDialog'
+import { Copy } from 'lucide-react'
 import { FlowsView } from '@/components/FlowsView'
 import { ReauthProvider, useReauth } from '../account/reauth'
+import { openVmScreen } from './ScreenPage'
 import { PveSection } from './PvePanel'
 import { NetworkBox, PermsBox, type VmNet, type VmPerms } from './VmNetwork'
 
@@ -26,11 +28,38 @@ interface Inst {
   name: string; type: 'container' | 'virtual-machine'; status: string; description?: string; created_at: string; image?: string
   cpus?: string; memory?: string; disk?: string; ipv4: string[]; mem_used?: number; disk_used?: number
   snapshots: { name: string; created_at: string }[]; forwards: { name: string; proto: string; host_port: number; target_port: number }[]
-  net?: VmNet; perms?: VmPerms
+  net?: VmNet; perms?: VmPerms; vnc?: boolean; agent?: boolean; booted_at?: number
 }
-interface Data { status: VmStatus; images: Img[]; items: Inst[]; has_password: Record<string, boolean>; sizes: Record<string, [number, number, number]>; my_keys: number }
+interface Data { status: VmStatus; images: Img[]; items: Inst[]; has_password: Record<string, boolean>; sizes: Record<string, [number, number, number]>; my_keys: number; agent_fix?: string }
 
 const running = (i: Inst) => i.status === 'Running'
+// a VM whose incus-agent never answered: Incus then knows no address outside NAT and no shell opens
+const noAgent = (i: Inst) => i.type === 'virtual-machine' && running(i) && i.agent === false && !!i.booted_at && Date.now() / 1000 - i.booted_at > 90
+const shellOK = (i: Inst) => i.type !== 'virtual-machine' || i.agent !== false
+
+// AddrTag says which network an address is on, so 10.x behind NAT does not look like a mistake
+function AddrTag({ i }: { i: Inst }) {
+  const t = useT()
+  const m = i.net?.mode
+  if (m !== 'nat' && m !== 'lan') return null
+  return <span title={t('vms.addr_' + m + '_d')} className={cx('ml-1.5 rounded px-1 py-px align-[1px] text-[10.5px] font-medium', m === 'lan' ? 'bg-ok/15 text-ok' : 'bg-line text-mute')}>{t('vms.addr_' + m)}</span>
+}
+
+function addrText(i: Inst, t: ReturnType<typeof useT>) {
+  if (i.ipv4[0]) return i.ipv4[0]
+  if (!running(i)) return t('vms.no_ip')
+  return noAgent(i) ? t('vms.addr_unknown') : i.net?.mode === 'lan' ? t('vmnet.lan_waiting') : t('vms.no_ip')
+}
+
+// ScreenButton opens the screen, or offers to turn it on (one restart) for machines made before it existed
+function ScreenButton({ i, variant }: { i: Inst; variant?: 'primary' | 'ghost' }) {
+  const t = useT()
+  const run = useChange()
+  const { host } = useHost()
+  return i.vnc
+    ? <Button size="sm" variant={variant} title={t('vms.screen_d')} onClick={() => openVmScreen(host, i.name)}>{t('vms.screen')}</Button>
+    : <Button size="sm" variant={variant} title={t('vms.screen_enable_d')} onClick={() => run('vm.screen.enable', { name: i.name }, { host })}>{t('action.vm.screen.enable')}</Button>
+}
 const kindLabel = (i: Inst, t: ReturnType<typeof useT>) => (i.type === 'virtual-machine' ? t('vms.type_vm') : t('vms.type_ct'))
 
 export default function VmsPage() {
@@ -50,6 +79,7 @@ function Vms() {
   useInterval(() => void d.reload(), waiting ? 5000 : null)
   const [creating, setCreating] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
+  const [made, setMade] = useState<string | null>(null)
   if (!d.data) return d.error ? <Notice tone="bad">{d.error.message}</Notice> : <div className="p-6 text-[13px] text-mute">{t('common.loading')}</div>
   const st = d.data.status
   if (!st.running) {
@@ -80,14 +110,15 @@ function Vms() {
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px] font-semibold">{i.name} <span className="font-normal text-mute">· {i.image || '—'}</span></div>
               <div className="num truncate text-[12px] text-mute">
-                {i.ipv4[0] ?? t('vms.no_ip')}{i.cpus ? ` · ${i.cpus} ${t('vms.cpu_unit')}` : ''}{i.memory ? ` · ${i.memory}` : ''}
+                {addrText(i, t)}<AddrTag i={i} />{i.cpus ? ` · ${i.cpus} ${t('vms.cpu_unit')}` : ''}{i.memory ? ` · ${i.memory}` : ''}
                 {running(i) && i.mem_used ? ` · ${t('vms.mem_used', { v: bytes(i.mem_used) })}` : ''}
               </div>
             </div>
             <Pill tone={i.type === 'virtual-machine' ? 'acc' : undefined}>{kindLabel(i, t)}</Pill>
             {manage && <span className="flex gap-1" onClick={(e) => e.stopPropagation()}>
               {running(i)
-                ? <>{can(user, 'terminal.use') && <Button size="sm" variant="ghost" onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
+                ? <>{i.type === 'virtual-machine' && <ScreenButton i={i} variant="ghost" />}
+                  {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant="ghost" onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
                   <Button size="sm" variant="ghost" onClick={() => run('vm.stop', { name: i.name }, { host })}>{t('action.vm.stop')}</Button></>
                 : <Button size="sm" onClick={() => run('vm.start', { name: i.name }, { host })}>{t('action.vm.start')}</Button>}
             </span>}
@@ -95,8 +126,9 @@ function Vms() {
         ))}
       </Box>
       <PveSection />
-      {creating && <CreateDialog data={d.data} onClose={() => setCreating(false)} onDone={(name) => { setCreating(false); void d.reload(); setOpen(name) }} />}
-      {inst && <VmDrawer inst={inst} hasPassword={!!d.data.has_password[inst.name]} onClose={() => setOpen(null)} />}
+      {creating && <CreateDialog data={d.data} onClose={() => setCreating(false)} onDone={(name) => { setCreating(false); void d.reload(); setMade(name) }} />}
+      {made && <CreatedDialog inst={items.find((i) => i.name === made)} name={made} onScreen={() => openVmScreen(host, made)} onClose={() => { setMade(null); setOpen(made) }} />}
+      {inst && !made && <VmDrawer inst={inst} agentFix={d.data.agent_fix ?? ''} hasPassword={!!d.data.has_password[inst.name]} onClose={() => setOpen(null)} />}
     </div>
   )
 }
@@ -116,14 +148,26 @@ function CreateDialog({ data, onClose, onDone }: { data: Data; onClose: () => vo
   const [touched, setTouched] = useState(false)
   const pick = (i: Img) => { setImg(i); if (!i.vm) setVm(false); if (!touched) setName(suggest(i.os)) }
   const canVM = data.status.vms && img.vm
-  const params = { name, image: img.alias, vm, size, ...(size === 'custom' ? custom : {}) }
+  // how root logs in: keys (mine, picked, plus one pasted), a password (generated or own), SSH with the password or not
+  const myKeys = useApi<{ items: { id: number; name: string; key: string }[] }>('/api/v1/me/ssh-keys', [])
+  const keys = myKeys.data?.items ?? []
+  const [unpicked, setUnpicked] = useState<Set<number>>(new Set())
+  const [extraKey, setExtraKey] = useState('')
+  const [pwMode, setPwMode] = useState<'auto' | 'own'>('auto')
+  const [pw, setPw] = useState('')
+  const [pwSSHSet, setPwSSH] = useState<boolean | null>(null)
+  const nKeys = keys.length - unpicked.size + (extraKey.trim() ? 1 : 0)
+  const pwSSH = pwSSHSet ?? nKeys === 0
+  const login = img.cloud ? { key_ids: keys.filter((k) => !unpicked.has(k.id)).map((k) => k.id), ...(extraKey.trim() ? { ssh_key: extraKey.trim() } : {}), ...(pwMode === 'own' ? { password: pw } : {}), password_ssh: pwSSH } : {}
+  const loginBad = img.cloud && pwMode === 'own' && pw.length < 8
+  const params = { name, image: img.alias, vm, size, ...(size === 'custom' ? custom : {}), ...login }
   const lan = useApi<{ ports: { name: string; wireless: boolean; bridge: boolean; default: boolean }[] }>(`/api/v1/hosts/${host}/vms-lan`, [host])
   const lanPort = (lan.data?.ports ?? []).find((p) => !p.wireless || p.bridge)
   const [netMode, setNetMode] = useState<'nat' | 'lan'>('nat')
   return (
     <Dialog open wide onOpenChange={(o) => !o && onClose()} title={t('vms.new')}
       footer={<><Button className="ml-auto" onClick={onClose}>{t('common.cancel')}</Button>
-        <Button variant="primary" disabled={!name} onClick={() => run('vm.create', params, { host, onDone: (c) => {
+        <Button variant="primary" disabled={!name || loginBad} onClick={() => run('vm.create', params, { host, onDone: (c) => {
           if (c.status === 'done' && netMode === 'lan' && lanPort) run('vm.network', { name, mode: 'lan', parent: lanPort.name }, { host, onDone: () => onDone(name) })
           else onDone(name)
         } })}>{t('action.vm.create')}</Button></>}>
@@ -168,13 +212,65 @@ function CreateDialog({ data, onClose, onDone }: { data: Data; onClose: () => vo
           <Segmented value={netMode} onChange={setNetMode} options={[{ value: 'nat', label: t('vmnet.m_nat') }, ...(lanPort ? [{ value: 'lan' as const, label: t('vmnet.m_lan') }] : [])]} />
         </Field>
         <Field label={t('vms.name')} hint={t('vms.name_hint')}><Input className="num" value={name} onChange={(e) => { setTouched(true); setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')) }} /></Field>
-        <Notice>{img.cloud ? (data.my_keys > 0 ? t('vms.login_keys', { n: data.my_keys }) : t('vms.login_password')) : t('vms.login_console')}</Notice>
+        {img.cloud ? <div className="space-y-3 rounded-[var(--radius-box)] border border-line p-3">
+          <div className="font-semibold">{t('vms.login')} <span className="font-normal text-mute">· root</span></div>
+          <div>
+            <div className="mb-1 text-[12.5px] font-medium">{t('vms.login_keys_t')}</div>
+            {keys.length === 0 && <p className="text-[12px] text-mute">{t('vms.login_no_keys')}</p>}
+            {keys.map((k) => (
+              <label key={k.id} className="flex items-center gap-2 py-0.5 text-[12.5px]">
+                <input type="checkbox" checked={!unpicked.has(k.id)} onChange={(e) => { const n = new Set(unpicked); if (e.target.checked) n.delete(k.id); else n.add(k.id); setUnpicked(n) }} />
+                <span>{k.name}</span><span className="num truncate text-mute">{k.key}</span>
+              </label>
+            ))}
+            <Textarea className="num mt-1.5 text-[12px]" rows={2} placeholder={t('vms.login_paste_key')} value={extraKey} onChange={(e) => setExtraKey(e.target.value)} />
+          </div>
+          <Field label={t('vms.login_pw')} hint={pwMode === 'auto' ? t('vms.login_pw_auto_d') : t('vms.login_pw_own_d')}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Segmented value={pwMode} onChange={setPwMode} options={[{ value: 'auto', label: t('vms.login_pw_auto') }, { value: 'own', label: t('vms.login_pw_own') }]} />
+              {pwMode === 'own' && <Input className="num w-56" type="text" autoComplete="new-password" value={pw} placeholder={t('vms.login_pw_min')} onChange={(e) => setPw(e.target.value)} />}
+            </div>
+          </Field>
+          <label className="flex items-start gap-2 text-[12.5px]">
+            <input type="checkbox" className="mt-0.5" checked={pwSSH} onChange={(e) => setPwSSH(e.target.checked)} />
+            <span>{t('vms.login_pw_ssh')}<span className="block text-mute">{nKeys > 0 ? t('vms.login_pw_ssh_keys') : t('vms.login_pw_ssh_nokeys')}</span></span>
+          </label>
+        </div> : <Notice>{t('vms.login_console')}</Notice>}
       </div>
     </Dialog>
   )
 }
 
-function VmDrawer({ inst: i, hasPassword, onClose }: { inst: Inst; hasPassword: boolean; onClose: () => void }) {
+// CreatedDialog: what is needed to log in, shown once right after the machine is made
+function CreatedDialog({ inst: i, name, onScreen, onClose }: { inst?: Inst; name: string; onScreen: () => void; onClose: () => void }) {
+  const t = useT()
+  const { host } = useHost()
+  const [login, setLogin] = useState<{ user: string; password: string } | null>(null)
+  const [none, setNone] = useState(false)
+  useEffect(() => {
+    post<{ user: string; password: string }>(`/api/v1/hosts/${host}/vms/${name}/first-login`).then(setLogin).catch(() => setNone(true))
+  }, [host, name])
+  const ip = i?.ipv4[0]
+  const kv = (k: string, v: React.ReactNode) => <div className="flex gap-3 py-1 text-[13px]"><span className="w-24 shrink-0 text-mute">{k}</span><span className="min-w-0 flex-1">{v}</span></div>
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} title={t('vms.made', { name })}
+      footer={<>{i?.type === 'virtual-machine' && i.vnc && <Button onClick={onScreen}>{t('vms.screen')}</Button>}
+        <Button className="ml-auto" variant="primary" onClick={onClose}>{t('vms.made_ok')}</Button></>}>
+      <div className="space-y-3 px-4 py-3">
+        <div>
+          {kv(t('vms.address'), <span className="num">{i ? addrText(i, t) : t('vms.no_ip')}{i && <AddrTag i={i} />}</span>)}
+          {kv(t('vms.user'), <span className="num select-all">root</span>)}
+          {login && kv(t('vms.password'), <span className="num select-all font-semibold">{login.password}</span>)}
+          {ip && kv('SSH', <span className="num select-all text-[12.5px]">{i?.net?.mode === 'lan' ? `ssh root@${ip}` : `ssh -J root@${location.hostname} root@${ip}`}</span>)}
+        </div>
+        {login && <Notice tone="warn">{t('vms.made_once')}</Notice>}
+        {none && <Notice>{t('vms.made_no_pw')}</Notice>}
+      </div>
+    </Dialog>
+  )
+}
+
+function VmDrawer({ inst: i, agentFix, hasPassword, onClose }: { inst: Inst; agentFix: string; hasPassword: boolean; onClose: () => void }) {
   const t = useT()
   const run = useChange()
   const reauth = useReauth()
@@ -200,8 +296,8 @@ function VmDrawer({ inst: i, hasPassword, onClose }: { inst: Inst; hasPassword: 
         {err && <Notice tone="bad">{err}</Notice>}
         {manage && <div className="flex flex-wrap gap-2">
           {running(i) ? <>
-            {can(user, 'terminal.use') && <Button size="sm" variant="primary" onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
-            {isVM && can(user, 'terminal.use') && <Button size="sm" onClick={() => requestTerminal({ target: 'instance-console', container: i.name })}>{t('vms.console')}</Button>}
+            {isVM && <ScreenButton i={i} variant="primary" />}
+            {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant={isVM ? undefined : 'primary'} onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
             {ip && can(user, 'sites.manage') && <Button size="sm" onClick={() => setSite(true)}>{t('vms.make_site')}</Button>}
             {ip && host === 'local' && can(user, 'remote.use') && <Button size="sm" onClick={() => nav(`/${host}/remote?` + new URLSearchParams({ add: 'rdp', name: i.name, addr: ip, group: t('nav.vms') }))}>{t('vms.remote_desktop')}</Button>}
             <Button size="sm" onClick={() => run('vm.restart', { name: i.name }, { host })}>{t('action.vm.restart')}</Button>
@@ -209,15 +305,28 @@ function VmDrawer({ inst: i, hasPassword, onClose }: { inst: Inst; hasPassword: 
             <Button size="sm" variant="ghost" onClick={() => run('vm.kill', { name: i.name }, { host })}>{t('action.vm.kill')}</Button>
           </> : <Button size="sm" variant="primary" onClick={() => run('vm.start', { name: i.name }, { host })}>{t('action.vm.start')}</Button>}
         </div>}
+        {noAgent(i) && <Notice tone="warn">
+          <div className="space-y-2">
+            <div>{t('vms.no_agent', { mode: i.net?.mode === 'lan' ? t('vms.no_agent_lan') : '' })}</div>
+            <div>{t(i.vnc ? 'vms.no_agent_how' : 'vms.no_agent_how_noscreen', { mac: i.net?.mac ?? '' })}</div>
+            <div className="flex items-start gap-2">
+              <code className="num block min-w-0 flex-1 select-all break-all rounded bg-bg px-2 py-1.5 text-[11.5px]" data-agent-fix>{agentFix}</code>
+              <button type="button" aria-label={t('common.copy')} className="mt-1 text-mute hover:text-fg" onClick={() => void navigator.clipboard?.writeText(agentFix)}><Copy className="size-3.5" /></button>
+            </div>
+            {!i.vnc && manage && <Button size="sm" onClick={() => run('vm.screen.enable', { name: i.name }, { host })}>{t('action.vm.screen.enable')}</Button>}
+          </div>
+        </Notice>}
         <div>
           {kv(t('vms.status'), <span className="flex items-center gap-1.5"><Dot state={running(i) ? 'ok' : 'off'} />{t('vms.st_' + i.status.toLowerCase())}</span>)}
           {kv(t('vms.system'), i.image || '—')}
           {kv(t('vms.size'), <span className="num">{i.cpus ?? '—'} {t('vms.cpu_unit')} · {i.memory ?? '—'} · {i.disk ?? '—'}{manage && <button className="ml-2 text-acc hover:underline" onClick={() => setResize(true)}>{t('vms.change')}</button>}</span>)}
           {running(i) && kv(t('vms.usage'), <span className="num">{i.mem_used ? t('vms.mem_used', { v: bytes(i.mem_used) }) : '—'}{(i.disk_used ?? 0) > 1 << 20 ? ' · ' + t('vms.disk_used', { v: bytes(i.disk_used) }) : '' /* btrfs pools report next to nothing: better no number than a wrong one */}</span>)}
-          {kv(t('vms.address'), <span className="num">{ip ?? t('vms.no_ip')}</span>)}
+          {kv(t('vms.address'), <span className="num">{addrText(i, t)}<AddrTag i={i} />{!ip && i.net?.mode === 'lan' && i.net.mac && <span className="ml-2 text-[12px] text-mute">MAC {i.net.mac}</span>}</span>)}
           {ip && kv('SSH', <div className="num space-y-1 text-[12px]">
-            <div><span className="text-mute">{t('vms.ssh_here')}</span> <span className="select-all">ssh root@{ip}</span></div>
-            {i.net?.mode !== 'lan' && <div><span className="text-mute">{t('vms.ssh_from_pc')}</span> <span className="select-all">ssh -J root@{location.hostname} root@{ip}</span></div>}
+            {i.net?.mode === 'lan'
+              ? <div><span className="text-mute">{t('vms.ssh_from_lan')}</span> <span className="select-all">ssh root@{ip}</span></div>
+              : <><div><span className="text-mute">{t('vms.ssh_here')}</span> <span className="select-all">ssh root@{ip}</span></div>
+                <div><span className="text-mute">{t('vms.ssh_from_pc')}</span> <span className="select-all">ssh -J root@{location.hostname} root@{ip}</span></div></>}
           </div>)}
           {hasPassword && kv(t('vms.password'), pw ? <span className="num select-all">{pw}</span> : <button className="text-acc hover:underline" onClick={() => void showPw()}>{t('vms.show_password')}</button>)}
           {kv(t('vms.created'), datetime(Date.parse(i.created_at) / 1000))}

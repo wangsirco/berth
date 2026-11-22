@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
+	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/wangsirco/berth/internal/agent"
 	"github.com/wangsirco/berth/internal/errs"
@@ -123,6 +128,63 @@ func Register(s *agent.Server) {
 			return
 		}
 		reply(w, nil, c.SetState(r.Context(), r.PathValue("name"), in.Action, in.Force))
+	})
+	// the VM's screen (QEMU VNC on a Unix socket), as a binary websocket for noVNC
+	s.Handle("GET /v1/vms/{name}/vnc", func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		name := r.PathValue("name")
+		if !ValidName(name) {
+			agent.WriteErr(w, errs.New(400, "vm.bad_name"))
+			return
+		}
+		if _, err := os.Stat(VNCSocket(name)); err != nil {
+			agent.WriteErr(w, errs.New(409, "vm.no_screen", "name", name))
+			return
+		}
+		up, err := net.DialTimeout("unix", VNCSocket(name), 5*time.Second)
+		if err != nil {
+			agent.WriteErr(w, errs.New(502, "vm.no_screen", "name", name))
+			return
+		}
+		defer up.Close()
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"binary"}})
+		if err != nil {
+			return
+		}
+		conn.SetReadLimit(16 << 20)
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		nc := websocket.NetConn(ctx, conn, websocket.MessageBinary)
+		defer nc.Close()
+		go func() {
+			defer cancel()
+			buf := make([]byte, 64<<10)
+			for {
+				n, err := up.Read(buf)
+				if n > 0 {
+					if _, werr := nc.Write(buf[:n]); werr != nil {
+						return
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+		buf := make([]byte, 64<<10)
+		for {
+			n, err := nc.Read(buf)
+			if n > 0 {
+				if _, werr := up.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	s.Handle("POST /v1/vms/{name}/vnc", func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		reply(w, nil, c.EnableVNC(r.Context(), r.PathValue("name")))
 	})
 	s.Handle("DELETE /v1/vms/{name}", func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		reply(w, nil, c.Delete(r.Context(), r.PathValue("name")))
