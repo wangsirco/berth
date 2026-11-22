@@ -2,6 +2,21 @@
 
 简体中文在前，English below each version.
 
+## 1.2.1 · 2026-11-22
+
+**代理**
+- 新增「在线与访问」：在线用户从哪些地址、哪个国家、经哪个节点连进来；访问记录（谁访问了哪个网站和端口、几次、是否被规则拦截），可按用户和关键词筛选或只看被拦截的；最近 24 小时访问最多的网站。访问记录保留 30 天。
+- Xray 版本可以选择和切换（GitHub 正式版 / 测试版，或总是用最新版）；切换先预览，可撤销。
+- 新建或修改节点时检查端口是否被占用、本机防火墙是否放行；保存后可顺手放行防火墙，并在已配对的 Wharf 路由器上映射端口，每一步先预览、确认后才执行。节点列表也可一键「在路由器上映射」。
+- 流量统计与在线状态改为每 20 秒更新。
+
+---
+
+- Proxy: new Online & access tab — who is connected from where and through which node, what sites they visited (with rule blocks), top destinations in 24 h; kept 30 days.
+- Pick and switch the Xray version (stable / pre-release / always latest), with preview and undo.
+- Node ports are checked for conflicts and firewall; after saving, open the firewall and map the port on a paired Wharf router, each step previewed first.
+- Traffic and online status refresh every 20 seconds.
+
 ## 1.2.0 · 2026-11-22
 
 **网站**

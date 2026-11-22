@@ -672,6 +672,11 @@ await spec('share-desktop', async () => {
 // Proxy extension: install Xray, a VLESS + REALITY node and a user; a real client (a second
 // xray container) fetches a page through it, and the traffic shows up on the user.
 await spec('proxy', async () => {
+  // one xray per host: when the real panel on this host runs the proxy, this spec would take
+  // its container over (and remove it at the end), so it stands aside
+  if (sh('ssh', [HOST, `sqlite3 /var/lib/berth/berth.db "SELECT value FROM settings WHERE key='proxy.installed'" 2>/dev/null; true`]) === '1') {
+    console.log('    skipped: the real panel on this host runs the proxy (one Xray per host)'); return
+  }
   const clean = () => sh('ssh', [HOST, 'docker rm -f e2e-xclient >/dev/null 2>&1; rm -rf /tmp/e2e-xclient; true'])
   clean()
   try {
@@ -709,6 +714,25 @@ await spec('proxy', async () => {
     assert(/ip=/.test(got), 'nothing came through the proxy: ' + got + sh('ssh', [HOST, 'docker logs --tail 20 e2e-xclient 2>&1; true']))
     // the traffic is counted (the panel reads the counters every minute)
     await until(page, async () => (await (await fetch('/api/v1/proxy')).json()).users.find((x) => x.name === 'e2e-user').used_down > 0, 80000)
+      .catch(async (e) => { throw new Error('traffic: ' + e.message + ' ' + JSON.stringify((await api('/api/v1/proxy')).body.users).slice(0, 300)) })
+    // who went where: the access log names the site, the online list the user
+    sh('ssh', [HOST, 'curl -s -m 20 -x socks5h://127.0.0.1:21080 -o /dev/null https://www.cloudflare.com/ ; true'])
+    await until(page, async () => (await (await fetch('/api/v1/proxy/access')).json()).items.some((x) => x.dest === 'www.cloudflare.com' && x.user === 'e2e-user'), 80000)
+      .catch(async (e) => { throw new Error(e.message + ' access=' + JSON.stringify((await api('/api/v1/proxy/access')).body).slice(0, 400) + ' online=' + JSON.stringify((await api('/api/v1/proxy/online')).body).slice(0, 200)) })
+    const on = (await api('/api/v1/proxy/online')).body
+    assert(on.items.some((x) => x.user === 'e2e-user' && x.ips.length > 0), 'online: ' + JSON.stringify(on))
+    await page.goto(`${BASE}/local/proxy`)
+    await click('::-p-aria([name="在线与访问"][role="tab"])')
+    await waitText('www.cloudflare.com', 10000)
+    await page.screenshot({ path: OUT + 'proxy-activity.png' })
+    // a version of choice, from the release list
+    const vs = (await api('/api/v1/proxy/versions')).body
+    const older = vs.items.find((x) => !x.prerelease && x.tag !== vs.items[0].tag)
+    assert(older, 'versions: ' + JSON.stringify(vs))
+    const sw = await change('proxy.version', { version: older.tag })
+    assert(sw.status === 'done', 'switch: ' + JSON.stringify(sw.result ?? sw.error))
+    await until(page, async (v) => ((await (await fetch('/api/v1/proxy')).json()).status?.version ?? '').includes(v), 60000, older.tag)
+      .catch(async (e) => { throw new Error('version: ' + e.message + ' ' + JSON.stringify((await api('/api/v1/proxy')).body.status)) })
   } finally {
     clean()
     const d = (await api('/api/v1/proxy')).body
@@ -716,6 +740,7 @@ await spec('proxy', async () => {
     for (const n of d.nodes ?? []) await change('proxy.node.delete', { id: n.id })
     if (d.installed) await change('proxy.uninstall', {})
     assert(!sh('ssh', [HOST, 'docker ps -a --format "{{.Names}}"']).includes('berth-proxy'), 'xray container left behind')
+    sh('ssh', [HOST, 'docker images --format "{{.Repository}}:{{.Tag}}" | grep "^ghcr.io/xtls/xray-core:" | xargs -r docker rmi >/dev/null 2>&1; true'])
   }
 })
 

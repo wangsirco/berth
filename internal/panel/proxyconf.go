@@ -453,11 +453,11 @@ func buildXray(nodes []*ProxyNode, users []*ProxyUser, pol proxyPolicy, now int6
 	// nobody reaches this server's own network unless allowed
 	rules = append(rules, jm{"ip": privateCIDRs, "outboundTag": "blocked"})
 	cfg := jm{
-		"log":   jm{"loglevel": "warning", "dnsLog": false},
+		"log":   jm{"loglevel": "warning", "access": "/var/log/xray/access.log", "dnsLog": false},
 		"api":   jm{"tag": "api", "services": []string{"StatsService", "HandlerService"}},
 		"stats": jm{},
 		"policy": jm{
-			"levels": jm{"0": jm{"statsUserUplink": true, "statsUserDownlink": true, "handshake": 4, "connIdle": 300}},
+			"levels": jm{"0": jm{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true, "handshake": 4, "connIdle": 300}},
 			"system": jm{"statsInboundUplink": true, "statsInboundDownlink": true},
 		},
 		"inbounds": inbounds,

@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"slices"
 	"strconv"
@@ -22,14 +23,22 @@ import (
 
 const (
 	proxyProject = "berth-proxy"
-	proxyImage   = "ghcr.io/xtls/xray-core:latest"
+	proxyRepo    = "ghcr.io/xtls/xray-core"
 )
 
-func proxyCompose() string {
+// proxyImage: the Xray version chosen on the page ("latest" until one is picked).
+func proxyImage(version string) string {
+	if version == "" {
+		version = "latest"
+	}
+	return proxyRepo + ":" + version
+}
+
+func proxyCompose(version string) string {
 	return `# Berth: Xray proxy (managed by the panel's 代理 page; edit nodes and users there)
 services:
   xray:
-    image: ` + proxyImage + `
+    image: ` + proxyImage(version) + `
     restart: unless-stopped
     # host network: every node listens on its own port of this server
     network_mode: host
@@ -38,6 +47,7 @@ services:
       # z: SELinux lets the container read them
       - ./config.json:/etc/xray/config.json:ro,z
       - ./certs:/etc/xray/certs:ro,z
+      - ./log:/var/log/xray:z
 `
 }
 
@@ -208,7 +218,8 @@ func (a *App) proxyApply(ctx context.Context) error {
 // ---- traffic: counters every minute, quotas, expiry, monthly reset ----
 
 func (a *App) proxyLoop(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
+	// every 20 s: traffic, quotas, who is online and where they went (cheap: two docker execs)
+	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -217,6 +228,7 @@ func (a *App) proxyLoop(ctx context.Context) {
 		case <-t.C:
 			if a.proxyInstalled() {
 				a.proxyTick(ctx)
+				a.proxyActivity(ctx)
 			}
 		}
 	}
@@ -231,7 +243,9 @@ func (a *App) proxyTick(ctx context.Context) {
 	}
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	_ = a.call(c, "local", "GET", "/v1/proxy/stats?reset=1", nil, &out)
+	if err := a.call(c, "local", "GET", "/v1/proxy/stats?reset=1", nil, &out); err != nil {
+		log.Printf("proxy: traffic counters: %v", err)
+	}
 	up, down := map[int64]int64{}, map[int64]int64{}
 	for _, s := range out.Stats {
 		parts := strings.Split(s.Name, ">>>") // user>>>u3@n1>>>traffic>>>uplink
@@ -423,8 +437,8 @@ func init() {
 	change.Register(change.Kind{
 		Name: "proxy.install", Perm: "network.manage", Scope: "network:write", Title: "kind.proxy.install", CLI: "berth proxy install",
 		Plan: func(env change.Env, raw json.RawMessage) (change.Plan, error) {
-			return change.Plan{Summary: "plan.proxy.install", SummaryP: map[string]any{"image": proxyImage}, Risk: change.RiskMedium, Undoable: true,
-				Files:    []change.FileDiff{{Path: "/srv/berth/stacks/" + proxyProject + "/compose.yaml", After: proxyCompose()}},
+			return change.Plan{Summary: "plan.proxy.install", SummaryP: map[string]any{"image": proxyImage(svc(env).setting("proxy.version"))}, Risk: change.RiskMedium, Undoable: true,
+				Files:    []change.FileDiff{{Path: "/srv/berth/stacks/" + proxyProject + "/compose.yaml", After: proxyCompose(svc(env).setting("proxy.version"))}},
 				Affected: []change.Object{projObj(proxyProject, "local")}}, nil
 		},
 		Apply: func(env change.Env, raw json.RawMessage) (any, *change.UndoRecipe, error) {
@@ -433,7 +447,7 @@ func init() {
 			if err := a.call(env.Ctx, "local", "PUT", "/v1/proxy/files", map[string]any{"config": cfg}, nil); err != nil {
 				return nil, nil, err
 			}
-			if err := a.call(env.Ctx, "local", "PUT", "/v1/compose/projects/"+proxyProject+"/files", map[string]any{"compose": proxyCompose(), "env": "", "create": true}, nil); err != nil && !strings.Contains(err.Error(), "exists") {
+			if err := a.call(env.Ctx, "local", "PUT", "/v1/compose/projects/"+proxyProject+"/files", map[string]any{"compose": proxyCompose(a.setting("proxy.version")), "env": "", "create": true}, nil); err != nil && !strings.Contains(err.Error(), "exists") {
 				return nil, nil, err
 			}
 			if err := agentOp(env, "/v1/compose/projects/"+proxyProject+"/up", nil); err != nil {

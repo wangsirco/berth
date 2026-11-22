@@ -180,6 +180,12 @@ func registerModules(s *agent.Server) {
 		return accesslog.Shared.CountryNets(ctx, code)
 	}
 	firewall.Register(s)
+	proxy.Country = func(ip string) string {
+		if accesslog.Shared == nil {
+			return ""
+		}
+		return accesslog.Shared.Country(net.ParseIP(ip))
+	}
 	proxy.Register(s)
 	traffic.Register(s, dc)
 	incus.Register(s)

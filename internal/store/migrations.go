@@ -287,4 +287,9 @@ var migrations = []string{
 	// v46: Xray 代理扩展——节点和用户（规格存 JSON，和 Wharf 的代理扩展同一套字段）
 	`CREATE TABLE proxy_nodes (id INTEGER PRIMARY KEY, spec TEXT NOT NULL);
 	 CREATE TABLE proxy_users (id INTEGER PRIMARY KEY, spec TEXT NOT NULL)`,
+	// v47: 代理访问记录（谁从哪里访问了哪些网站，按分钟合并计数，保留 30 天）
+	`CREATE TABLE proxy_access (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, last INTEGER NOT NULL, user_id INTEGER NOT NULL, node_id INTEGER NOT NULL,
+		ip TEXT NOT NULL, country TEXT NOT NULL DEFAULT '', dest TEXT NOT NULL, port INTEGER NOT NULL, net TEXT NOT NULL, status TEXT NOT NULL, count INTEGER NOT NULL);
+	 CREATE INDEX proxy_access_ts ON proxy_access(ts);
+	 CREATE INDEX proxy_access_user ON proxy_access(user_id, ts)`,
 }

@@ -4,13 +4,16 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +61,8 @@ func writeFiles(in filesReq) error {
 	if err := os.MkdirAll(filepath.Join(Dir, "certs"), 0o700); err != nil {
 		return err
 	}
+	os.MkdirAll(LogDir, 0o700)
+	os.Chown(LogDir, xrayUID, xrayUID)
 	os.Chown(Dir, xrayUID, xrayUID)
 	os.Chmod(Dir, 0o700)
 	os.Chown(filepath.Join(Dir, "certs"), xrayUID, xrayUID)
@@ -189,6 +194,7 @@ func status(ctx context.Context) Status {
 
 // Register adds /v1/proxy/*.
 func Register(s *agent.Server) {
+	RegisterActivity(s)
 	s.Handle("PUT /v1/proxy/files", func(w http.ResponseWriter, r *http.Request, body []byte) {
 		var in filesReq
 		if err := json.Unmarshal(body, &in); err != nil {
@@ -227,5 +233,149 @@ func Register(s *agent.Server) {
 	s.Handle("GET /v1/proxy/site-cert", func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		_, _, ok := siteCert(r.URL.Query().Get("domain"))
 		agent.WriteJSON(w, 200, map[string]bool{"ok": ok})
+	})
+}
+
+// ---- activity: who is online, and where they went ----
+
+// LogDir is where xray writes its access log (mounted read-write at /var/log/xray).
+var LogDir = Dir + "/log"
+
+// Access is one (user, source, destination) seen in the access log, counted.
+type Access struct {
+	Email   string `json:"email"`
+	IP      string `json:"ip"`
+	Country string `json:"country,omitempty"`
+	Dest    string `json:"dest"`
+	Port    int    `json:"port"`
+	Net     string `json:"net"`
+	Status  string `json:"status"` // accepted | rejected | blocked
+	Count   int    `json:"count"`
+	First   int64  `json:"first"`
+	Last    int64  `json:"last"`
+}
+
+// Online: an address a user is connected from right now.
+type Online struct {
+	IP       string `json:"ip"`
+	LastSeen int64  `json:"last_seen"`
+	Country  string `json:"country,omitempty"`
+}
+
+// 2026/10/24 22:35:03.798918 from 1.2.3.4:54358 accepted tcp:www.cloudflare.com:443 [n1 >> direct] email: u1@n1
+var accessRe = regexp.MustCompile(`^(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d)(?:\.\d+)? from (?:tcp:|udp:)?(\S+) (accepted|rejected) (tcp|udp):(\S+) \[([^\]]*)\](?: email: (\S+))?`)
+
+var logOff int64
+
+func splitHostPortLoose(s string) string {
+	if i := strings.LastIndexByte(s, ':'); i > 0 {
+		return strings.Trim(s[:i], "[]")
+	}
+	return s
+}
+
+// tailAccess reads what xray appended since the last call, folding repeats together.
+func tailAccess(country func(string) string) []Access {
+	p := LogDir + "/access.log"
+	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() < logOff {
+		logOff = 0 // truncated
+	}
+	f.Seek(logOff, io.SeekStart)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 64<<10)
+	read := logOff
+	idx := map[string]int{}
+	var out []Access
+	for sc.Scan() {
+		line := sc.Text()
+		read += int64(len(line)) + 1
+		m := accessRe.FindStringSubmatch(line)
+		if m == nil || strings.HasPrefix(m[6], "api") {
+			continue
+		}
+		ts, err := time.ParseInLocation("2006/01/02 15:04:05", m[1], time.UTC) // the container logs in UTC
+		if err != nil {
+			continue
+		}
+		dest, port := m[5], 0
+		if i := strings.LastIndexByte(dest, ':'); i > 0 {
+			port, _ = strconv.Atoi(dest[i+1:])
+			dest = strings.Trim(dest[:i], "[]")
+		}
+		outb := ""
+		for _, sep := range []string{" >> ", " -> "} {
+			if _, b, ok := strings.Cut(m[6], sep); ok {
+				outb = b
+			}
+		}
+		status := m[3]
+		if status == "accepted" && outb == "blocked" { // refused by a routing rule (LAN, BT, blocked port / site)
+			status = "blocked"
+		}
+		ip := splitHostPortLoose(m[2])
+		k := m[7] + "|" + ip + "|" + dest + "|" + strconv.Itoa(port) + "|" + m[4] + "|" + status
+		if i, ok := idx[k]; ok {
+			out[i].Count++
+			out[i].Last = ts.Unix()
+			continue
+		}
+		idx[k] = len(out)
+		out = append(out, Access{Email: m[7], IP: ip, Country: country(ip), Dest: dest, Port: port, Net: m[4], Status: status, Count: 1, First: ts.Unix(), Last: ts.Unix()})
+	}
+	logOff = read
+	if read > 8<<20 { // keep the log small; xray appends, so truncating in place is safe
+		os.Truncate(p, 0)
+		logOff = 0
+	}
+	return out
+}
+
+func online(ctx context.Context, country func(string) string) map[string][]Online {
+	res := map[string][]Online{}
+	out, err := run(ctx, "docker", "exec", Container, "xray", "api", "statsonlineiplist", "--server="+APIAddr, "-all")
+	if err != nil {
+		return res
+	}
+	var r struct {
+		Users []struct {
+			Email string `json:"email"`
+			IPs   []struct {
+				IP       string `json:"ip"`
+				LastSeen int64  `json:"lastSeen"`
+			} `json:"ips"`
+		} `json:"users"`
+	}
+	if json.Unmarshal([]byte(out), &r) != nil {
+		return res
+	}
+	for _, u := range r.Users {
+		for _, ip := range u.IPs {
+			res[u.Email] = append(res[u.Email], Online{IP: ip.IP, LastSeen: ip.LastSeen, Country: country(ip.IP)})
+		}
+	}
+	return res
+}
+
+// Country, when set, names an address's country (the agent's GeoIP).
+var Country func(ip string) string
+
+// RegisterActivity adds GET /v1/proxy/activity: online users now, and the access log since
+// the last call.
+func RegisterActivity(s *agent.Server) {
+	s.Handle("GET /v1/proxy/activity", func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		c := func(ip string) string {
+			if Country == nil {
+				return ""
+			}
+			return Country(ip)
+		}
+		agent.WriteJSON(w, 200, map[string]any{"online": online(ctx, c), "access": tailAccess(c)})
 	})
 }
