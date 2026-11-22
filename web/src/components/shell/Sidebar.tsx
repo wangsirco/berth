@@ -1,6 +1,6 @@
 import {
   Activity, ArchiveRestore, AtSign, CalendarClock, Cloud, Rocket, Bell, Boxes, ChevronsUpDown, Code2, Database, Folder, GitBranch, Globe, House, KeyRound, LogOut, Monitor, MonitorSmartphone,
-  Moon, Puzzle, ScrollText, Search, Server, ServerCog, Settings, ShieldCheck, Sparkles, SquareTerminal, Store, Sun, UserRound, Users, Waypoints, type LucideIcon,
+  Link2, Moon, Plus, Puzzle, ScrollText, Search, Server, ServerCog, Settings, ShieldCheck, Sparkles, SquareTerminal, Store, Sun, UserRound, Users, Waypoints, type LucideIcon,
 } from 'lucide-react'
 import { WharfMark } from '@/components/brand/WharfMark'
 import { TaskButton } from './TaskButton'
@@ -23,7 +23,7 @@ import { navGroups } from './nav'
 export const ICONS: Record<string, LucideIcon> = {
   overview: House, sites: Globe, projects: Rocket, domains: AtSign, containers: Boxes, store: Store, vms: Monitor, db: Database, files: Folder,
   pipeline: GitBranch, dev: Code2, remote: MonitorSmartphone, backup: ArchiveRestore, network: ShieldCheck, monitor: Bell,
-  audit: ScrollText, system: Server, hosts: ServerCog, extensions: Puzzle, plugins: Puzzle, cron: CalendarClock, cloudflare: Cloud, proxy: Waypoints, wharf: WharfMark as unknown as LucideIcon, users: Users, tokens: KeyRound, settings: Settings,
+  audit: ScrollText, system: Server, hosts: ServerCog, links: Link2, extensions: Puzzle, plugins: Puzzle, cron: CalendarClock, cloudflare: Cloud, proxy: Waypoints, wharf: WharfMark as unknown as LucideIcon, users: Users, tokens: KeyRound, settings: Settings,
 }
 
 // names that read better in the sidebar than the page titles do
@@ -71,7 +71,21 @@ export function Sidebar({ onSearch, onTerminal, onTasks, counts, panelName, onNa
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-mute" />
         </button>}
-        items={hosts.map((h) => ({ label: <span className="inline-flex items-center gap-2"><SignalFlag name={h.name} size={14} />{h.name}{!h.online && <span className="text-xs text-mute">{t('shell.offline')}</span>}</span>, onClick: () => go(hostPath(h.name, 'overview')) }))} />
+        items={[
+          ...hosts.filter((h) => !h.peer).map((h) => ({ label: <span className="inline-flex items-center gap-2"><SignalFlag name={h.name} size={14} />{h.name}{!h.online && <span className="text-xs text-mute">{t('shell.offline')}</span>}</span>, onClick: () => go(hostPath(h.name, 'overview')) })),
+          // servers handed over by linked panels, one group per panel
+          ...[...new Set(hosts.filter((h) => h.peer).map((h) => h.peer!.name))].flatMap((peer) => ['sep' as const,
+            { label: <span className="text-[11.5px] text-mute">{t('shell.from_panel', { name: peer })}</span>, onClick: () => go('/local/links'), disabled: false },
+            ...hosts.filter((h) => h.peer?.name === peer).map((h) => ({
+              label: <span className="inline-flex items-center gap-2"><Link2 className="size-3.5 text-acc" />{h.name.split('@')[0]}<span className="text-xs text-mute">@{h.peer!.slug}</span>{!h.online && <span className="text-xs text-mute">{t('shell.offline')}</span>}</span>,
+              onClick: () => go(hostPath(h.name, 'overview')),
+            }))]),
+          // adding a server belongs where servers are picked, not only under the Hosts page
+          ...(can(user, 'settings.manage') ? ['sep' as const,
+            { label: <span className="inline-flex items-center gap-2 text-acc"><Plus className="size-3.5" />{t('hosts.add')}</span>, onClick: () => go('/local/hosts?add=1') },
+            { label: <span className="inline-flex items-center gap-2 text-mute"><Link2 className="size-3.5" />{t('shell.link_panel')}</span>, onClick: () => go('/local/links') },
+            { label: <span className="inline-flex items-center gap-2 text-mute"><Server className="size-3.5" />{t('shell.manage_hosts')}</span>, onClick: () => go('/local/hosts') }] : []),
+        ]} />
       <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-[9px] px-2.5 py-[7px] text-[13px] text-mute hover:bg-[color-mix(in_srgb,var(--line)_45%,transparent)]">
         <Search className="size-4" /><span className="flex-1 text-left">{t('shell.search')}</span><Kbd>⌘K</Kbd>
       </button>

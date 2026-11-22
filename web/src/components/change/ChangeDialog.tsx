@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
-import { ApiError, post } from '@/lib/api'
+import { ApiError, get, post } from '@/lib/api'
 import { usePick, useT } from '@/lib/i18n'
 import type { Change } from '@/lib/types'
 import { useEvents } from '@/lib/useEvents'
@@ -15,7 +15,7 @@ import { RiskBadge } from './RiskBadge'
 // url: a special endpoint that turns form input into the change (e.g. hashing a password
 // before it becomes a user.create change); it must accept ?plan=1 like the generic one.
 // typeToConfirm: make the person type this word even when the change is not destructive (root plugins, restoring the panel)
-type RunOpts = { host?: string; onDone?: (c: Change) => void; confirmName?: string; typeToConfirm?: string; url?: string }
+type RunOpts = { host?: string; onDone?: (c: Change) => void; onStart?: (c: Change) => void /* accepted: running or done (the form that asked can close) */; confirmName?: string; typeToConfirm?: string; url?: string }
 type State = { kind: string; params: unknown; opts: RunOpts; plan?: Change; error?: string; busy: boolean; result?: Change; seq: number; show: boolean }
 type Toast = { key: number; text: string; change?: Change; undone?: boolean }
 
@@ -60,7 +60,23 @@ export function ChangeProvider({ host: defaultHost = 'local', children }: { host
       const c = await post<Change>(url(s, false), s.params)
       const mine = (cur: State | null) => cur?.seq === s.seq
       const label = s.plan ? actionLabel(pick(s.plan.action), s.plan) : s.kind
-      if (c.status === 'running') {
+      if (c.status === 'running' || c.status === 'done') s.opts.onStart?.(c)
+      const peerHost = (s.opts.host ?? defaultHost).includes('@') ? (s.opts.host ?? defaultHost) : '' // a linked panel's server: no live events from there
+      if (c.status === 'running' && peerHost) {
+        setSt((cur) => (mine(cur) ? null : cur))
+        toast({ text: t('change.on_peer', { what: label }) })
+        void (async () => {
+          for (let i = 0; i < 900; i++) {
+            await new Promise((r) => setTimeout(r, 2000))
+            const cur = await get<Change>(`/api/v1/hosts/${encodeURIComponent(peerHost)}/changes/${c.id}`).catch(() => null)
+            if (cur && cur.status !== 'running') {
+              s.opts.onDone?.({ ...cur, host: peerHost })
+              toast({ text: t(cur.status === 'done' ? 'change.done_toast' : 'change.failed_toast', { what: label }), change: cur.status === 'done' ? { ...cur, host: peerHost } : undefined })
+              return
+            }
+          }
+        })()
+      } else if (c.status === 'running') {
         waiting.current.set(c.id, (done) => {
           s.opts.onDone?.(done)
           if (quiet && done.status === 'done') toast({ text: t('change.done_toast', { what: label }), change: done })
@@ -102,7 +118,8 @@ export function ChangeProvider({ host: defaultHost = 'local', children }: { host
   const undo = async (x: Toast) => {
     if (!x.change) return
     try {
-      await post(`/api/v1/changes/${x.change.id}/revert`)
+      const h = x.change.host ?? ''
+      await post(h.includes('@') ? `/api/v1/hosts/${encodeURIComponent(h)}/changes/${x.change.id}/revert` : `/api/v1/changes/${x.change.id}/revert`)
       setToasts((l) => l.map((y) => (y.key === x.key ? { ...y, undone: true } : y)))
     } catch (e) {
       toast({ text: (e as Error).message })

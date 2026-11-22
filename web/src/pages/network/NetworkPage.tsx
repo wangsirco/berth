@@ -14,6 +14,7 @@ import { del, errText, get, post, put } from '@/lib/api'
 import { domainsShort, type Site } from '@/pages/sites/types'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
+import { ConnBadge, type Live as LinkLive } from '../links/LinksPage'
 import { useEvents } from '@/lib/useEvents'
 import { NeedsExtension, useBuiltin } from '../extensions/Builtin'
 import { TabBar } from '@/components/ui/Tabs'
@@ -694,7 +695,7 @@ function ZoneStats({ integ, zone, onClose }: { integ: string; zone: CFZone; onCl
 }
 
 interface WharfLinkInfo { url: string; name: string; fp: string; scopes: string[]; target_ips: string[]; alerts_primary: string; paired_at: number; last_seen?: number; state: string }
-export interface WharfStatus { paired: boolean; berth_fp: string; link?: WharfLinkInfo; user_map?: { wharf_user: string; berth_user: string }[] }
+export interface WharfStatus { paired: boolean; berth_fp: string; link?: WharfLinkInfo; live?: LinkLive; user_map?: { wharf_user: string; berth_user: string }[] }
 interface WharfView {
   paired: boolean
   published?: { site_id: number; mode: string; wan_port?: string; target_ip: string }[]
@@ -709,14 +710,14 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
   const t = useT()
   const { user } = useAuth()
   const [u, setU] = useState('')
-  const [chain, setChain] = useState<{ subject: string; issuer: string; ca: boolean; fp: string }[] | null>(null)
+  const [chain, setChain] = useState<{ subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] | null>(null)
   const [fp, setFp] = useState('')
   const [err, setErr] = useState('')
   const full = /^https?:\/\//.test(u) ? u : 'https://' + u
   const probe = async () => {
     setErr(''); setChain(null)
     try {
-      const r = await post<{ chain: { subject: string; issuer: string; ca: boolean; fp: string }[] }>('/api/v1/wharf/probe', { url: full })
+      const r = await post<{ chain: { subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] }>('/api/v1/wharf/probe', { url: full })
       setChain(r.chain)
       setFp((r.chain.find((c) => c.ca) ?? r.chain[r.chain.length - 1]).fp)
     } catch (e) { setErr(errText(e)) }
@@ -731,7 +732,9 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
         {err && <Notice tone="bad">{err}</Notice>}
         <div className="flex gap-2"><Input className="num flex-1" value={u} onChange={(e) => setU(e.target.value.trim())} placeholder="https://192.168.1.1:8443" /><Button disabled={!u} onClick={probe}>{t('wharf.check_cert')}</Button></div>
         {chain && <>
-          <p>{t('wharf.pick_fp')}</p>
+          {chain[0]?.public
+            ? <Notice tone="acc">{t('wharf.public_cert', { issuer: chain[0].issuer })}</Notice>
+            : <p>{t('wharf.pick_fp')}</p>}
           {chain.map((c) => (
             <label key={c.fp} className="flex cursor-pointer items-start gap-2 rounded-[var(--radius-box)] border border-line p-2">
               <input type="radio" checked={fp === c.fp} onChange={() => setFp(c.fp)} className="mt-1" />
@@ -769,7 +772,7 @@ export function WharfPaired({ st, reload }: { st: WharfStatus; reload: () => voi
     <>
       {err && <Notice tone="bad">{err}</Notice>}
       {l.state === 'broken' && <Notice tone="bad">{t('wharf.broken')}</Notice>}
-      <Box title={l.name} right={<div className="flex gap-2">
+      <Box title={<span className="inline-flex items-center gap-2">{l.name}<ConnBadge live={st.live} /></span>} right={<div className="flex gap-2">
         {l.scopes.includes('sso') && <Button size="sm" variant="primary" onClick={openWharf}>{t('wharf.open')}</Button>}
         {user?.role === 'super' && <Button size="sm" variant="ghost" onClick={() => setUnpair(true)}>{t('action.wharf.unpair')}</Button>}
       </div>}>

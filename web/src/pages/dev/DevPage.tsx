@@ -13,7 +13,7 @@ import { bytes } from '@/lib/format'
 import { useApi, useInterval } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
-import { requestTerminal } from '@/pages/terminal/store'
+import { openTerminal } from '@/pages/terminal/store'
 import { NewSiteDialog } from '@/pages/sites/NewSiteDialog'
 import { FlowsView } from '@/components/FlowsView'
 import { useSearchParams } from 'react-router-dom'
@@ -153,7 +153,7 @@ function Card({ it, stat, onOpen, onRun }: { it: Item; stat?: Stat; onOpen: () =
         {up && it.ssh && <a className="inline-flex" href={`vscode://vscode-remote/ssh-remote+${it.ssh.user}@${it.ssh.host}:${it.ssh.port}${it.ssh.folder}`}><Button size="sm">{t('dev.open_vscode')}</Button></a>}
         {up && s.claude && <Button size="sm" onClick={() => openClaude(s.name)}>{t('claude.chat')}</Button>}
         {up && s.claude && <Button size="sm" onClick={onOpen}>{t('claude.new_task')}</Button>}
-        {up && <Button size="sm" onClick={() => requestTerminal({ target: 'dev', container: s.name })}>{t('dev.terminal')}</Button>}
+        {up && <Button size="sm" onClick={() => openTerminal({ target: 'dev', container: s.name })}>{t('dev.terminal')}</Button>}
         {!up && <Button size="sm" variant="primary" onClick={() => onRun('dev.start')}>{t('action.dev.start')}</Button>}
       </div>
       {msg && <div className="mt-2 text-[12px] text-ok">{msg}</div>}
@@ -197,7 +197,7 @@ function DevDrawer({ it, data, focusTask, onClose }: { it: Item; data: Data; foc
         <div className="flex flex-wrap gap-2">
           {up ? <>
             {s.code && it.web && <Button size="sm" variant="primary" onClick={() => void openEditor(it)}>{t('dev.open_web')}</Button>}
-            <Button size="sm" onClick={() => requestTerminal({ target: 'dev', container: s.name })}>{t('dev.terminal')}</Button>
+            <Button size="sm" onClick={() => openTerminal({ target: 'dev', container: s.name })}>{t('dev.terminal')}</Button>
             <Button size="sm" onClick={() => run('dev.restart', { name: s.name }, { host })}>{t('action.dev.restart')}</Button>
             <Button size="sm" onClick={() => run('dev.stop', { name: s.name }, { host })}>{t('action.dev.stop')}</Button>
           </> : <Button size="sm" variant="primary" onClick={() => run('dev.start', { name: s.name }, { host })}>{t('action.dev.start')}</Button>}

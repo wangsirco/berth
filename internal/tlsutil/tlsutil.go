@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -97,4 +98,54 @@ func PinnedConfig(fingerprint string) *tls.Config {
 			return nil
 		},
 	}
+}
+
+// PinOrPublic trusts a server two ways, so the same peer works on the LAN and through a
+// public name: a certificate in its chain matches the pinned fingerprint (its own CA, reached
+// directly), or the chain is valid for the name dialled under the system roots (a public
+// certificate: a reverse proxy, Cloudflare, Let's Encrypt in front of it). Who the peer is
+// gets proven above TLS (the pairing secret), so a valid public certificate is enough here.
+func PinOrPublic(fingerprint string) *tls.Config {
+	want := strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, // replaced by VerifyConnection
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			return CheckPinOrPublic(cs, want)
+		},
+	}
+}
+
+// CheckPinOrPublic is PinOrPublic's test, for a connection already made.
+func CheckPinOrPublic(cs tls.ConnectionState, fingerprint string) error {
+	if len(cs.PeerCertificates) == 0 {
+		return errors.New("no certificate")
+	}
+	want := strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+	for _, c := range cs.PeerCertificates {
+		h := sha256.Sum256(c.Raw)
+		if want != "" && hex.EncodeToString(h[:]) == want {
+			return nil
+		}
+	}
+	if PublicOK(cs) == nil {
+		return nil
+	}
+	return fmt.Errorf("certificate is neither the paired one nor valid for %q (resumed=%v, %d certs, want %.8s)", cs.ServerName, cs.DidResume, len(cs.PeerCertificates), want)
+}
+
+// publicRoots: nil means the system's; tests put their own root here.
+var publicRoots *x509.CertPool
+
+// PublicOK verifies the chain for the dialled name under the system roots.
+func PublicOK(cs tls.ConnectionState) error {
+	if len(cs.PeerCertificates) == 0 || cs.ServerName == "" {
+		return errors.New("no certificate or no name")
+	}
+	inter := x509.NewCertPool()
+	for _, c := range cs.PeerCertificates[1:] {
+		inter.AddCert(c)
+	}
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName, Intermediates: inter, Roots: publicRoots})
+	return err
 }

@@ -34,8 +34,9 @@ type hostView struct {
 	Remote   bool             `json:"remote,omitempty"`
 	Version  string           `json:"version,omitempty"`
 	Arch     string           `json:"arch,omitempty"`
-	Addr     string           `json:"addr,omitempty"` // where a remote agent connects from
+	Addr     string           `json:"addr,omitempty"`    // where a remote agent connects from
 	Upgrade  string           `json:"upgrade,omitempty"` // a newer agent this panel can hand to a remote host
+	Peer     *peerInfo        `json:"peer,omitempty"`    // a server of a linked panel (name@peer)
 }
 
 // online: a sample in the last 5 seconds.
@@ -89,6 +90,9 @@ func (a *App) handleHosts(w http.ResponseWriter, r *http.Request) {
 		}
 		cancel()
 		out = append(out, v)
+	}
+	if u.Role == RoleSuper && linkFrom(r) == nil {
+		out = append(out, a.peerHosts()...)
 	}
 	writeJSON(w, 200, map[string]any{"items": out, "name": a.setting("panel.name")})
 }

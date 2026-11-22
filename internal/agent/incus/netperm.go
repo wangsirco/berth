@@ -82,6 +82,24 @@ type LANPort struct {
 
 var skipIface = regexp.MustCompile(`^(lo|incusbr\d*|docker\d*|br-[0-9a-f]+|veth.*|tap.*|tun.*|tailscale.*|wg.*|virbr.*|p2p-.*|macvlan.*|mac[0-9a-f]+)$`)
 
+// lanNIC is eth0 on a host port: macvlan on a wired port, bridged on a host bridge.
+func lanNIC(parent string) (map[string]any, error) {
+	for _, p := range LANPorts() {
+		if p.Name != parent {
+			continue
+		}
+		if p.Wireless && !p.Bridge {
+			return nil, &Error{Status: 400, Message: "macvlan does not work over Wi-Fi; use a wired port or a bridge"}
+		}
+		nictype := "macvlan"
+		if p.Bridge {
+			nictype = "bridged"
+		}
+		return map[string]any{"type": "nic", "nictype": nictype, "parent": parent, "name": "eth0"}, nil
+	}
+	return nil, &Error{Status: 400, Message: "no such LAN port: " + parent}
+}
+
 // LANPorts: wired interfaces and host bridges, the one with the default route first.
 func LANPorts() []LANPort {
 	def := ""

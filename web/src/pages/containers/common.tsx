@@ -7,12 +7,12 @@ import { cx } from '@/components/ui/cx'
 import { can, useAuth } from '@/lib/auth'
 import { useT } from '@/lib/i18n'
 import type { Container } from '@/lib/types'
-import { requestTerminal } from '../terminal/store'
+import { openTerminal as openTerm } from '../terminal/store'
 
 export const stateDot = (s: string): 'ok' | 'warn' | 'bad' | 'off' => (s === 'running' ? 'ok' : s === 'restarting' || s === 'paused' ? 'warn' : s === 'dead' ? 'bad' : 'off')
 
 export function openTerminal(container?: string) {
-  requestTerminal({ target: container ? 'container' : 'host', container })
+  openTerm({ target: container ? 'container' : 'host', container })
 }
 
 // ContainerMenu: the per-row actions, each one a previewed change.

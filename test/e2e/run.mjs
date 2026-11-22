@@ -250,6 +250,31 @@ await spec('terminal', async () => {
   await click(btn('终端'))
   await click(btn('接上'))
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('e2e-2'), { timeout: 10000 })
+  // moved to a tab of its own, it is the same shell: a variable set below is still there
+  await page.focus('.xterm-helper-textarea')
+  await page.keyboard.type('export E2EMARK=same-$((40+2))')
+  await page.keyboard.press('Enter')
+  await sleep(500)
+  const popped = new Promise((ok) => browser.once('targetcreated', (tg) => ok(tg)))
+  await click('[data-pop-out]')
+  const tg = await Promise.race([popped, sleep(10000).then(() => null)])
+  assert(tg && /\/term\/local\/[^/]+$/.test(tg.url()), 'no terminal tab: ' + (tg && tg.url()))
+  const win = await tg.page()
+  await win.waitForSelector('.xterm-helper-textarea', { timeout: 10000 })
+  await sleep(1500)
+  await win.focus('.xterm-helper-textarea')
+  await win.keyboard.type('echo mark:$E2EMARK')
+  await win.keyboard.press('Enter')
+  await win.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('mark:same-42'), { timeout: 10000 })
+  await win.close()
+  // and the bottom panel let it go (it is listed as running in the background)
+  await waitText('后台运行中')
+  // the host menu offers adding a server
+  await page.goto(`${BASE}/local/overview`)
+  await click('[aria-label="切换主机"]')
+  await click('::-p-xpath(//*[@role="menuitem"][contains(normalize-space(.),"添加主机")])')
+  await page.waitForFunction(() => location.pathname === '/local/hosts' && [...document.querySelectorAll('[role=dialog]')].some((d) => d.textContent.includes('添加主机')), { timeout: 10000 })
+  await page.keyboard.press('Escape')
   const sessions = await api('/api/v1/hosts/local/terminals')
   for (const s of sessions.body.items) await page.evaluate(async (id) => fetch(`/api/v1/hosts/local/terminals/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': (await fetch('/api/v1/me').then((r) => r.json())).csrf } }), s.id)
 })
@@ -664,6 +689,121 @@ await spec('vm-screen', async () => {
   await sleep(1500)
   await page.screenshot({ path: OUT + 'vm-screen.png' })
   sh('ssh', [HOST, 'incus stop --timeout 30 t-vnc 2>/dev/null || incus stop -f t-vnc 2>/dev/null; true']) // a fixture: off between runs
+})
+
+await spec('panel-link', async () => {
+  // two panels: A is this e2e panel on the dev server; B is the panel inside the fedora-1 VM
+  // (on the LAN with its own address). A temporary NAT card lets the server and the VM reach
+  // each other (macvlan keeps them apart); a temporary admin on B is removed afterwards.
+  const inVM = (cmd) => sh('ssh', [HOST, `incus exec fedora-1 -- sh -c '${cmd}' </dev/null`])
+  if (!sh('ssh', [HOST, "incus exec fedora-1 -- systemctl is-active berth-panel 2>/dev/null </dev/null; true"]).includes('active')) { console.log('    skipped: no panel in fedora-1'); return }
+  const B_LAN = 'https://' + sh('ssh', [HOST, "incus exec fedora-1 -- ip -4 -o addr show enp5s0 </dev/null | awk '{print $4}' | cut -d/ -f1"]) + ':7090' // its LAN address
+  const B_NAT = 'https://10.42.231.249:7090'
+  const A_NAT = 'https://10.42.231.1:7092'
+  const entry = (/安全入口：(\/[^\s（(]+)/.exec(inVM('/usr/local/bin/berth-panel admin info 2>&1')) ?? [])[1] ?? ''
+  const pwB = 'Lk-' + Math.random().toString(36).slice(2, 12) + '!9'
+  sh('scp', ['-q', ROOT + 'test/e2e/linknet.sh', HOST + ':/tmp/e2e-linknet.sh'])
+  const nic = sh('ssh', [HOST, 'sh /tmp/e2e-linknet.sh up'])
+  assert(nic.includes('10.42.231.249'), 'temporary card: ' + nic)
+  inVM(`/root/devuser del e2e-link >/dev/null 2>&1; echo "${pwB}" | /root/devuser add e2e-link`)
+  const pageB = await browser.newPage()
+  pageB.on('dialog', (d) => void d.accept())
+  try {
+    await pageB.bringToFront()
+    await pageB.goto(B_LAN + entry)
+    const lr = await pageB.evaluate(async (pw) => (await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'e2e-link', password: pw }) })).status, pwB)
+    assert(lr === 200, 'login on B: ' + lr)
+    // a link left by an earlier run (whose main panel is gone) would block a new one
+    await pageB.evaluate(async () => {
+      const me = await (await fetch('/api/v1/me')).json()
+      for (const l of (await (await fetch('/api/v1/links')).json()).items ?? []) await fetch('/api/v1/links/' + l.id, { method: 'DELETE', headers: { 'X-CSRF-Token': me.csrf } })
+    })
+    // A: the code, with the address B can reach A at
+    await page.bringToFront()
+    await page.goto(`${BASE}/local/links`)
+    await waitText('对方已经装了 Berth 面板', 30000)
+    await click('::-p-xpath(//button[normalize-space(.)="管理另一个面板（生成配对码）"])')
+    await page.waitForSelector('[data-our-addrs]', { timeout: 15000 })
+    await page.$eval('[data-our-addrs]', (el) => { el.focus(); el.select() })
+    await page.keyboard.press('Backspace')
+    await page.type('[data-our-addrs]', A_NAT)
+    await click(btn('生成配对码'))
+    await page.waitForSelector('[data-link-code]')
+    const code = await page.$eval('[data-link-code]', (el) => el.value)
+    assert(code.startsWith('berth-link:'), 'code: ' + code.slice(0, 20))
+    // B: the landing link, who wants what, the address A reaches B at, hand "local" over
+    await pageB.bringToFront()
+    await pageB.goto(B_LAN + '/local/links#accept=' + encodeURIComponent(code))
+    await pageB.waitForFunction(() => document.body.innerText.includes('想管理这个面板的服务器') || document.body.innerText.includes('连不上'), { timeout: 30000 }).catch(() => {})
+    await pageB.screenshot({ path: OUT + 'panel-link-b.png' })
+    await pageB.waitForFunction(() => document.body.innerText.includes('想管理这个面板的服务器'), { timeout: 5000 })
+    const sasB = await pageB.$eval('[role=dialog] .tracking-widest', (el) => el.textContent.trim())
+    await pageB.waitForSelector('[role=dialog] textarea', { timeout: 15000 })
+    await pageB.$eval('[role=dialog] textarea', (el) => { el.focus(); el.select() })
+    await pageB.keyboard.press('Backspace')
+    await pageB.type('[role=dialog] textarea', B_NAT)
+    await pageB.click('::-p-xpath(//*[@role="dialog"]//button[starts-with(normalize-space(.),"交出")])')
+    await pageB.waitForFunction(() => document.body.innerText.includes('等它确认'), { timeout: 20000 })
+    // A: the same check code, then confirm
+    await page.bringToFront()
+    await page.waitForSelector('[data-sas]', { timeout: 20000 })
+    const sasA = await page.$eval('[data-sas]', (el) => el.textContent.trim())
+    assert(sasA === sasB && /^\d{3} \d{3}$/.test(sasA), `check codes ${sasA} / ${sasB}`)
+    await click('::-p-xpath(//*[@role="dialog"]//button[normalize-space(.)="确认互联"])')
+    if (await page.$('::-p-xpath(//*[@role="dialog"]//input[@type="password"])').catch(() => null)) { // asked to sign in again
+      await page.type('::-p-xpath(//*[@role="dialog"]//input[@type="password"])', PASSWORD)
+      await page.keyboard.press('Enter')
+    }
+    let slug = ''
+    for (let i = 0; i < 30 && !slug; i++) { await sleep(1000); const l = (await api('/api/v1/links')).body?.items?.find((x) => x.role === 'main' && x.status === 'active'); slug = l?.slug ?? '' }
+    assert(slug, 'A has no active link')
+    // B's server, from A: a read and a write that lands on B and can be undone
+    const peer = `local@${slug}`
+    const cs = await api(`/api/v1/hosts/${encodeURIComponent(peer)}/containers`)
+    assert(cs.status === 200 && Array.isArray(cs.body.items), 'containers on B through A: ' + cs.status)
+    const mk = await post(`/api/v1/hosts/${encodeURIComponent(peer)}/changes/file.mkdir`, { path: '/tmp/e2e-link-dir' })
+    let ch = mk.body
+    for (let i = 0; i < 30 && ch && ['running', 'queued'].includes(ch.status); i++) { await sleep(1000); ch = (await api(`/api/v1/hosts/${encodeURIComponent(peer)}/changes/${mk.body.id}`)).body }
+    assert(ch?.status === 'done', 'mkdir on B: ' + JSON.stringify(ch?.error ?? ch))
+    assert(inVM('test -d /tmp/e2e-link-dir && echo yes; true').includes('yes'), 'the folder is not on B')
+    const undo = await post(`/api/v1/hosts/${encodeURIComponent(peer)}/changes/${mk.body.id}/revert`, {})
+    assert(undo.status === 200, 'undo through the link: ' + undo.status)
+    for (let i = 0; i < 15 && inVM('test -d /tmp/e2e-link-dir && echo yes; true').includes('yes'); i++) await sleep(1000)
+    assert(!inVM('test -d /tmp/e2e-link-dir && echo yes; true').includes('yes'), 'undo did not reach B')
+    // B's settings stay B's
+    const bad = await post(`/api/v1/hosts/${encodeURIComponent(peer)}/changes/settings.update?plan=1`, { values: { 'panel.name': 'x' } })
+    assert(bad.status === 403, 'settings through the link: ' + bad.status)
+    // B's audit names A
+    await pageB.bringToFront()
+    const audit = await pageB.evaluate(async () => (await (await fetch('/api/v1/changes?limit=50')).json()).items ?? [])
+    assert(audit.some((c) => c.actor?.type === 'link' && c.kind === 'file.mkdir'), 'B audit: ' + JSON.stringify(audit.slice(0, 3).map((c) => [c.kind, c.actor])))
+    // the link as A sees it: LAN, latency, B's servers in the host menu
+    await page.bringToFront()
+    await page.goto(`${BASE}/local/links`)
+    await page.waitForSelector('[data-route=lan]', { timeout: 40000 })
+    await waitText('延迟')
+    await page.screenshot({ path: OUT + 'panel-link.png' })
+    await click('[aria-label="切换主机"]')
+    await page.waitForFunction((s) => document.body.innerText.includes('@' + s), { timeout: 10000 }, slug)
+    await page.keyboard.press('Escape')
+    // B takes it back: A loses it at once
+    await pageB.bringToFront()
+    const bl = await pageB.evaluate(async () => (await (await fetch('/api/v1/links')).json()).items)
+    await pageB.goto(B_LAN + '/local/links')
+    await pageB.waitForSelector(`[data-link="${bl[0].id}"]`)
+    await pageB.click(`::-p-xpath(//*[@data-link="${bl[0].id}"]//button[normalize-space(.)="断开"])`)
+    let gone = 0
+    for (let i = 0; i < 15 && gone !== 404; i++) { await sleep(1000); gone = (await api(`/api/v1/hosts/${encodeURIComponent(peer)}/containers`)).status }
+    assert(gone === 404, 'A still reaches B after unlink: ' + gone)
+  } finally {
+    await pageB.evaluate(async () => { // never leave a link behind on B
+      const me = await (await fetch('/api/v1/me')).json()
+      for (const l of (await (await fetch('/api/v1/links')).json()).items ?? []) await fetch('/api/v1/links/' + l.id, { method: 'DELETE', headers: { 'X-CSRF-Token': me.csrf } })
+    }).catch(() => {})
+    await pageB.close().catch(() => {})
+    inVM('/root/devuser del e2e-link >/dev/null 2>&1; rm -rf /tmp/e2e-link-dir; true')
+    sh('ssh', [HOST, 'sh /tmp/e2e-linknet.sh down; rm -f /tmp/e2e-linknet.sh'])
+  }
 })
 
 await spec('remote-desktop', async () => {
@@ -1394,6 +1534,7 @@ await spec('ai-assistant', async () => {
 })
 
 await spec('multi-host', async () => {
+  if (!sh('ssh', [HOST, 'incus list -c n -f csv 2>/dev/null; true']).split('\n').includes('h2')) { console.log('    skipped: no h2 VM on this host (a second machine for the agent)'); return }
   const onH2 = (cmd) => sh('ssh', [HOST, `incus exec h2 -- sh -c ${JSON.stringify(cmd)}`])
   // the VM is kept stopped between runs: start it for the test, stop it again afterwards
   const wasStopped = sh('ssh', [HOST, 'incus list h2 -c s -f csv']) !== 'RUNNING'
@@ -1470,6 +1611,7 @@ await spec('multi-host', async () => {
 })
 
 await spec('file-sync', async () => {
+  if (!sh('ssh', [HOST, 'incus list -c n -f csv 2>/dev/null; true']).split('\n').includes('h2')) { console.log('    skipped: no h2 VM on this host (a second machine for the agent)'); return }
   const onHost = (cmd) => sh('ssh', [HOST, cmd])
   const onH2 = (cmd) => sh('ssh', [HOST, `incus exec h2 -- sh -c ${JSON.stringify(cmd)}`])
   const wasStopped = onHost('incus list h2 -c s -f csv') !== 'RUNNING'
@@ -3712,8 +3854,14 @@ await spec('vm-network', async () => {
     assert((await waitC(await change('vm.share', { name: N, id: 'e2e', source: '/srv/e2e-share', path: '/mnt/e2e', readonly: true }))).status === 'done', 'share')
     assert(inside('cat /mnt/e2e/hello.txt').includes('shared-ok'), 'shared file seen inside')
     assert(!inside('touch /mnt/e2e/x && echo wrote').includes('wrote'), 'read-only inside')
+    // made on the LAN in one step: one change, the card is there before the first boot
+    const one = await waitC(await change('vm.create', { name: N + '-lan', image: 'debian/13/cloud', vm: false, size: 'small', lan: port }))
+    assert(one.status === 'done', 'create on the LAN: ' + JSON.stringify(one.error ?? one.result))
+    assert(onHost(`incus config device get ${N}-lan eth0 nictype; incus config device get ${N}-lan eth0 parent`) === `macvlan\n${port}`, 'LAN card at creation')
+    const bad = await post(`/api/v1/hosts/local/changes/vm.create?plan=1`, { name: 'e2e-bad', image: 'debian/13/cloud', size: 'small', lan: 'eth0; rm' })
+    assert(bad.status === 400, 'a port name with junk is refused: ' + bad.status)
   } finally {
-    onHost(`incus delete -f ${N} 2>/dev/null; incus network acl delete berth-${N} 2>/dev/null; rm -rf /srv/e2e-share; true`)
+    onHost(`incus delete -f ${N} ${N}-lan 2>/dev/null; incus network acl delete berth-${N} 2>/dev/null; rm -rf /srv/e2e-share; true`)
   }
 })
 

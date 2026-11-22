@@ -80,7 +80,7 @@ function IncusScreen({ host, name }: { host: string; name: string }) {
   }
   return <ScreenWindow source={{
     name, sub: t('vsc.kind') + (ip ? ` · ${ip}` : ''),
-    connect: () => post<{ key: string }>(`/api/v1/hosts/${host}/vms/${name}/screen`).then((k) => ({ path: `/api/v1/vm-screen/${k.key}` })),
+    connect: () => post<{ key: string }>(`/api/v1/hosts/${encodeURIComponent(host)}/vms/${name}/screen`).then((k) => ({ path: `/api/v1/hosts/${encodeURIComponent(host)}/vm-screen/${k.key}` })),
     side: (io) => <>
       <Section title={t('vsc.machine')}>
         <Row k={t('vms.status')} v={inst ? t('vms.st_' + inst.status.toLowerCase()) : '—'} />

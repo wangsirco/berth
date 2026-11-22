@@ -107,6 +107,7 @@ export interface Host {
 export interface Berth { type: 'container' | 'service' | 'user' | 'kernel' | 'free' | 'vm'; id: string; name: string; mem_bytes: number; cpu: number; project?: string }
 
 export interface Caps { OS: string; OSVersion: string; Kernel: string; Arch: string; DockerVersion: string; PageSize: number; Docker: boolean }
-export interface HostInfo { name: string; online: boolean; last_seen: number; caps?: Caps }
+export interface PeerInfo { id: number; name: string; slug: string; route?: string; via?: string; rtt_ms?: number }
+export interface HostInfo { name: string; online: boolean; last_seen: number; caps?: Caps; peer?: PeerInfo }
 
 export interface Point { t: number; v: number }

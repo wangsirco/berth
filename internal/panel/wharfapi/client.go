@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangsirco/berth/internal/tlsutil"
 	"io"
 	"net"
 	"net/http"
@@ -46,20 +47,10 @@ func Fingerprint(c *x509.Certificate) string {
 	return hex.EncodeToString(h[:])
 }
 
-// pinned accepts a chain when any certificate in it matches fp (Wharf's local CA stays the
-// same when its leaf certificate is renewed).
-func pinned(fp string) *tls.Config {
-	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12,
-		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
-			for _, b := range raw {
-				h := sha256.Sum256(b)
-				if strings.EqualFold(hex.EncodeToString(h[:]), fp) {
-					return nil
-				}
-			}
-			return errors.New("wharf certificate does not match the paired fingerprint")
-		}}
-}
+// pinned accepts Wharf's own certificate (any one in the chain matching fp: its local CA stays
+// when the leaf renews) or a valid public certificate for the name, when Wharf is reached
+// through its public domain behind a reverse proxy or Cloudflare.
+func pinned(fp string) *tls.Config { return tlsutil.PinOrPublic(fp) }
 
 func httpClient(fp string) *http.Client {
 	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: pinned(fp),
@@ -77,15 +68,17 @@ func Chain(ctx context.Context, base string) ([]CertInfo, error) {
 	if u.Port() == "" {
 		host += ":443"
 	}
-	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 8 * time.Second}, Config: &tls.Config{InsecureSkipVerify: true}}
+	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 8 * time.Second}, Config: &tls.Config{InsecureSkipVerify: true, ServerName: u.Hostname()}}
 	conn, err := d.DialContext(ctx, "tcp", host)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 	var out []CertInfo
-	for _, c := range conn.(*tls.Conn).ConnectionState().PeerCertificates {
-		out = append(out, CertInfo{Subject: c.Subject.CommonName, Issuer: c.Issuer.CommonName, CA: c.IsCA, FP: Fingerprint(c), NotAfter: c.NotAfter.Unix()})
+	cs := conn.(*tls.Conn).ConnectionState()
+	public := tlsutil.PublicOK(cs) == nil // a public certificate for this name: checked by name, renewals keep working
+	for _, c := range cs.PeerCertificates {
+		out = append(out, CertInfo{Subject: c.Subject.CommonName, Issuer: c.Issuer.CommonName, CA: c.IsCA, FP: Fingerprint(c), NotAfter: c.NotAfter.Unix(), Public: public})
 	}
 	return out, nil
 }
@@ -96,6 +89,7 @@ type CertInfo struct {
 	CA       bool   `json:"ca"`
 	FP       string `json:"fp"`
 	NotAfter int64  `json:"not_after"`
+	Public   bool   `json:"public,omitempty"` // the chain is valid for the name under public roots
 }
 
 // ---- pairing ----

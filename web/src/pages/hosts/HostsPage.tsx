@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom'
-import { useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -17,7 +17,9 @@ export default function HostsPage() {
   const t = useT()
   const run = useChange()
   const list = useApi<{ items: HostRow[] }>('/api/v1/hosts')
-  const [adding, setAdding] = useState(false)
+  const [params, setParams] = useSearchParams()
+  const [adding, setAdding] = useState(params.get('add') === '1') // from the host menu's 'add host'
+  useEffect(() => { if (params.get('add') === '1') { setAdding(true); setParams({}, { replace: true }) } }, [params, setParams])
   useEvents(['host.online', 'host.offline', 'change.done'], () => void list.reload())
   return (
     <div className="space-y-3">

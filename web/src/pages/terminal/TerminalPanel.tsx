@@ -1,4 +1,4 @@
-import { BookMarked, Columns2, Plus, X } from 'lucide-react'
+import { BookMarked, Columns2, ExternalLink, Plus, X } from 'lucide-react'
 import { CommandLibrary } from '@/components/snippets/CommandLibrary'
 import { Drawer } from '@/components/ui/Dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -13,7 +13,7 @@ import { ago } from '@/lib/format'
 import { useMedia } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import type { Container } from '@/lib/types'
-import { onRequest, takeRequests, type OpenRequest } from './store'
+import { onRequest, openTermTab, setTermWhere, takeRequests, termWhere, type OpenRequest } from './store'
 import { TerminalView, type TerminalHandle } from './TerminalView'
 
 export interface Session { id: string; target: string; container?: string; user: string; title: string; created: number; last_active: number; clients: number; recording: boolean; exited: boolean }
@@ -54,6 +54,7 @@ export default function TerminalPanel({ compact }: { compact?: boolean }) {
   const [containers, setContainers] = useState<Container[]>([])
   const [err, setErr] = useState('')
   const [lib, setLib] = useState(() => localStorage.getItem('berth.cmdlib') === '1')
+  const [where, setWhere] = useState(termWhere)
   useEffect(() => { localStorage.setItem('berth.cmdlib', lib ? '1' : '0') }, [lib])
   const handles = useRef<Record<string, TerminalHandle | null>>({})
   const refresh = useCallback(() => get<{ items: Session[] }>(`/api/v1/hosts/${host}/terminals`).then((r) => setSessions(r.items)).catch(() => {}), [host])
@@ -102,12 +103,16 @@ export default function TerminalPanel({ compact }: { compact?: boolean }) {
             <span key={id} className={cx('inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-box)] px-2 py-0.5 text-[12.5px]', id === active || id === split ? 'bg-soft font-semibold' : 'text-mute')}>
               <button onClick={() => setActive(id)}>{byId(id)?.title || id}</button>
               {byId(id)?.recording && <Pill tone="bad" className="!leading-4">REC</Pill>}
+              <button aria-label={t('term.pop_out')} title={t('term.pop_out')} onClick={() => { if (openTermTab(host, id)) close(id, false) }} className="text-mute hover:text-fg" data-pop-out={id}><ExternalLink className="size-3" /></button>
               <button aria-label={t('terminal.detach')} title={t('terminal.detach')} onClick={() => close(id, false)} className="text-mute hover:text-fg"><X className="size-3" /></button>
             </span>
           ))}
         </div>
         {tabs.length > 0 && <Button size="sm" variant={lib ? 'primary' : 'ghost'} aria-pressed={lib} onClick={() => setLib(!lib)}><BookMarked className="size-3.5" />{t('snip.title')}</Button>}
         <label className="hidden items-center gap-1 text-[12px] text-mute sm:flex"><input type="checkbox" checked={record} onChange={(e) => setRecord(e.target.checked)} />{t('terminal.record')}</label>
+        <label className="hidden items-center gap-1 text-[12px] text-mute sm:flex" title={t('term.where_hint')}>
+          <input type="checkbox" checked={where === 'tab'} onChange={(e) => { const w = e.target.checked ? 'tab' : 'panel'; setTermWhere(w); setWhere(w) }} />{t('term.where_tab')}
+        </label>
         {!phone && tabs.length > 1 && (
           <Button size="sm" variant="ghost" aria-label={t('terminal.split')} onClick={() => setSplit(split ? undefined : tabs.find((x) => x !== active))}><Columns2 className="size-4" /></Button>
         )}

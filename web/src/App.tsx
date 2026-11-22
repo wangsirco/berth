@@ -33,6 +33,7 @@ const Cron = lazy(() => import('./pages/cron/CronPage'))
 const WharfHome = lazy(() => import('./pages/wharf/WharfPage'))
 const Pipelines = lazy(() => import('./pages/pipeline/PipelinePage'))
 const Hosts = lazy(() => import('./pages/hosts/HostsPage'))
+const Links = lazy(() => import('./pages/links/LinksPage'))
 const Store = lazy(() => import('./pages/store/StorePage'))
 const Databases = lazy(() => import('./pages/db/DatabasesPage'))
 const Backup = lazy(() => import('./pages/backup/BackupPage'))
@@ -46,6 +47,7 @@ const System = lazy(() => import('./pages/system/SystemPage'))
 const RemoteViewer = lazy(() => import('./pages/remote/ViewerPage'))
 const VmScreen = lazy(() => import('./pages/vms/ScreenPage'))
 const PveScreen = lazy(() => import('./pages/vms/PveScreenPage'))
+const TermWindow = lazy(() => import('./pages/terminal/TermWindow'))
 const AcceptInvite = lazy(() => import('./pages/invite/AcceptInvitePage'))
 const SharedViewer = lazy(() => import('./pages/remote/SharedViewer'))
 const Proxy = lazy(() => import('./pages/proxy/ProxyPage'))
@@ -69,6 +71,7 @@ export default function App() {
         <Route path="/remote/:id" element={<RequireAuth><RemoteViewer /></RequireAuth>} />
         <Route path="/vm-screen/:host/:name" element={<RequireAuth><VmScreen /></RequireAuth>} />
         <Route path="/pve-screen/:cluster/:node/:type/:vmid" element={<RequireAuth><PveScreen /></RequireAuth>} />
+        <Route path="/term/:host/:id" element={<RequireAuth><TermWindow /></RequireAuth>} />
         <Route path="/wharf/paired" element={<RequireAuth><WharfPaired /></RequireAuth>} />
         <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
         <Route path="/wall" element={<RequireAuth><Wall /></RequireAuth>} />
@@ -97,6 +100,7 @@ export default function App() {
           <Route path="system" element={<System />} />
           <Route path="pipeline/*" element={<Pipelines />} />
           <Route path="hosts" element={<Hosts />} />
+          <Route path="links" element={<Links />} />
           <Route path="containers/*" element={<Containers />} />
           <Route path="files/*" element={<Files />} />
           <Route path="files-trash" element={<Trash />} />

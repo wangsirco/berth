@@ -34,6 +34,7 @@ export const GROUPS: NavGroup[] = [
   { key: 'server', items: [
     { key: 'system', path: 'system', perm: 'system.view' },
     { key: 'hosts', path: 'hosts', perm: 'settings.manage' },
+    { key: 'links', path: 'links', perm: 'settings.manage' },
     { key: 'plugins', path: 'plugins', perm: 'extensions.use' },
     { key: 'users', path: 'users', perm: 'users.manage' },
     { key: 'tokens', path: 'tokens' },

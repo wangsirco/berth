@@ -2,6 +2,49 @@
 
 简体中文在前，English below each version.
 
+## 1.4.0 · 2026-11-23
+
+**面板互联：两台都装了 Berth 面板的服务器，交给一个主面板统一管理**
+- 侧栏新增「面板互联」，并排说明两种绑定方式：对方没装面板，用「添加主机」装 agent；对方已经装了面板，用「面板互联」。
+- 配对码 + 两边确认：
+  - 主面板生成配对码，先确认对方用哪些地址连过来（内网、公网域名、Tailscale 都行）；也可以发一个链接，在对方面板上打开直接落到确认页。
+  - 对方看到谁要管、勾选交出哪些服务器、对方能做什么，以及一个 6 位校验码。
+  - 主面板确认前看到同一个校验码，一样再确认。两边都要再验证一次身份。
+- 生效后，对方的服务器在主机菜单里单独成一组（例如 `local@家里mini`），网站、容器、虚拟机、画面、终端、文件等页面都能直接用，变更可撤销。
+- **安全**：
+  - 互联密钥由两边各自算出（X25519），不在网上传；之后每个请求都签名，不能冒充、不能重放。
+  - 主面板在对方那边只是管理员，只能动交出去的服务器，碰不到对方的账号、令牌和设置。
+  - 每一步都记进对方面板的审计，写明是谁做的。
+  - 对方随时可以断开，立即生效；一个面板同时只能交给一个主面板。
+
+**内网互联与公网互联（面板之间、面板与 Wharf 都适用）**
+- **证书两种都认**：直连时认对方面板自己的证书；经公网域名、反代、Cloudflare 或 Let's Encrypt 时，认对这个域名有效的公网证书，续期不会断。修复：用公网域名绑定 Wharf 时证书对不上。
+- **地址**：内网优先、公网兜底，记住上次能用的那个。
+- **显示**：
+  - 内网只显示一个小标签「内网互联」；Tailscale 显示「Tailscale 互联（加密）」；
+  - 公网显示「公网互联」，并注明直连（端到端加密）还是经 Cloudflare 等代理（会提示加密在代理处解开）；
+  - 都显示延迟与抖动、对方 IP，公网时显示国家。
+
+**虚拟机与终端**
+- 新建时选「局域网独立 IP」一步完成：只有一次确认，网卡在第一次开机前接好；确认后「新建」窗口立即关掉，进度看任务日志。弹窗遮罩加深并轻微虚化，叠在一起时层次清楚。
+- 修复：虚拟机里装了 Docker 时，地址显示成 docker0 的 172.17.0.1。现在显示它真正的局域网地址。
+- 终端可以在新标签页打开（工具栏里勾一次，各处的「终端」按钮都跟着）；页面下方的会话可以「在新标签页继续」，是同一个会话，不用重新登录。
+- 左上角主机菜单里加「添加主机」「面板互联」「管理主机」。
+- 修复：已经装了 Berth 面板的服务器，运行「添加主机」的加入命令会被另一个面板抢走 agent。现在会停下来说明原因，什么也不改。
+
+---
+
+- **Linked panels**: hand the servers of one Berth panel to a main panel. Link code, check code and confirmation on both sides; the link key is never sent and every request is signed. The main panel acts as an admin on the handed-over servers only (no accounts, tokens or settings), audited on both sides; either side can unlink at once.
+- LAN and internet links, for panels and Wharf alike:
+  - the panel's own certificate or a valid public one (reverse proxy, Cloudflare, Let's Encrypt);
+  - LAN / Tailscale / internet tags, direct or through a CDN;
+  - latency, address and country.
+  - Fix: pairing Wharf by its public name.
+- New VMs on the LAN in one step; VMs running Docker show their real address.
+- Terminals open in a new tab, and a session at the bottom can move to a tab and continue.
+- The host menu offers adding a host and linking a panel.
+- Fix: the add-host command no longer takes over a server that runs its own panel.
+
 ## 1.3.0 · 2026-11-22
 
 **虚拟机「画面」：像 VMware / PVE 的控制台，开在单独的窗口里**

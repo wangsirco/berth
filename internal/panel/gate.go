@@ -22,7 +22,7 @@ type tokenGate struct{ app *App }
 
 func (g tokenGate) check(a change.Actor, risk string) (bool, error) {
 	switch a.Type {
-	case "user", "system", "schedule", "pat", "cli", "ext":
+	case "user", "system", "schedule", "pat", "cli", "ext", "link": // link: a linked main panel, already limited to the servers handed over
 		return false, nil
 	case "agt":
 		pol, _ := tokenPolicies.Load(a.ID)

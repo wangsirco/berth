@@ -41,8 +41,10 @@ type App struct {
 	agentsMu    sync.RWMutex
 	remotes     map[string]io.Closer // live remote sessions by host name
 	web         fs.FS
-	builtinWeb  fs.FS  // the UI compiled in, for going back from a downloaded one
-	certRefresh func() // re-issue the panel certificate (set by main)
+	apiMux      *http.ServeMux
+	links_      *linkStates // panel links: what the probes found // the routes themselves (a linked panel's requests are dispatched here)
+	builtinWeb  fs.FS       // the UI compiled in, for going back from a downloaded one
+	certRefresh func()      // re-issue the panel certificate (set by main)
 	pipe        *change.Pipeline
 	masterKey   []byte
 	limiter     *loginLimiter

@@ -13,7 +13,7 @@ import { bytes, datetime } from '@/lib/format'
 import { useApi, useInterval } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
-import { requestTerminal } from '@/pages/terminal/store'
+import { openTerminal } from '@/pages/terminal/store'
 import { NewSiteDialog } from '@/pages/sites/NewSiteDialog'
 import { Copy } from 'lucide-react'
 import { FlowsView } from '@/components/FlowsView'
@@ -118,7 +118,7 @@ function Vms() {
             {manage && <span className="flex gap-1" onClick={(e) => e.stopPropagation()}>
               {running(i)
                 ? <>{i.type === 'virtual-machine' && <ScreenButton i={i} variant="ghost" />}
-                  {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant="ghost" onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
+                  {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant="ghost" onClick={() => openTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
                   <Button size="sm" variant="ghost" onClick={() => run('vm.stop', { name: i.name }, { host })}>{t('action.vm.stop')}</Button></>
                 : <Button size="sm" onClick={() => run('vm.start', { name: i.name }, { host })}>{t('action.vm.start')}</Button>}
             </span>}
@@ -167,10 +167,11 @@ function CreateDialog({ data, onClose, onDone }: { data: Data; onClose: () => vo
   return (
     <Dialog open wide onOpenChange={(o) => !o && onClose()} title={t('vms.new')}
       footer={<><Button className="ml-auto" onClick={onClose}>{t('common.cancel')}</Button>
-        <Button variant="primary" disabled={!name || loginBad} onClick={() => run('vm.create', params, { host, onDone: (c) => {
-          if (c.status === 'done' && netMode === 'lan' && lanPort) run('vm.network', { name, mode: 'lan', parent: lanPort.name }, { host, onDone: () => onDone(name) })
-          else onDone(name)
-        } })}>{t('action.vm.create')}</Button></>}>
+        <Button variant="primary" disabled={!name || loginBad} onClick={() => run('vm.create', { ...params, ...(netMode === 'lan' && lanPort ? { lan: lanPort.name } : {}) }, {
+          host,
+          onStart: onClose, // the form closes as soon as the change is accepted; the task log shows progress
+          onDone: (c) => { if (c.status === 'done') onDone(name) },
+        })}>{t('action.vm.create')}</Button></>}>
       <div className="space-y-4 px-4 py-3 text-[13px]">
         <div>
           <div className="mb-1.5 font-semibold">{t('vms.system')}</div>
@@ -297,7 +298,7 @@ function VmDrawer({ inst: i, agentFix, hasPassword, onClose }: { inst: Inst; age
         {manage && <div className="flex flex-wrap gap-2">
           {running(i) ? <>
             {isVM && <ScreenButton i={i} variant="primary" />}
-            {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant={isVM ? undefined : 'primary'} onClick={() => requestTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
+            {can(user, 'terminal.use') && shellOK(i) && <Button size="sm" variant={isVM ? undefined : 'primary'} onClick={() => openTerminal({ target: 'instance', container: i.name })}>{t('vms.shell')}</Button>}
             {ip && can(user, 'sites.manage') && <Button size="sm" onClick={() => setSite(true)}>{t('vms.make_site')}</Button>}
             {ip && host === 'local' && can(user, 'remote.use') && <Button size="sm" onClick={() => nav(`/${host}/remote?` + new URLSearchParams({ add: 'rdp', name: i.name, addr: ip, group: t('nav.vms') }))}>{t('vms.remote_desktop')}</Button>}
             <Button size="sm" onClick={() => run('vm.restart', { name: i.name }, { host })}>{t('action.vm.restart')}</Button>

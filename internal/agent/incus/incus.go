@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/wangsirco/berth/internal/errs"
@@ -246,10 +248,23 @@ func (r rawInstance) convert() Instance {
 		if d, ok := s.Disk["root"]; ok {
 			in.DiskUsed = d.Usage
 		}
-		for nic, n := range s.Network {
-			if nic == "lo" {
-				continue
+		// the machine's own cards first (eth0, enp5s0…), in a stable order; bridges and
+		// container networks inside it (docker0, br-…, veth…) are not its address
+		nics := make([]string, 0, len(s.Network))
+		for nic := range s.Network {
+			if nic != "lo" && !innerNIC.MatchString(nic) {
+				nics = append(nics, nic)
 			}
+		}
+		sort.Slice(nics, func(i, j int) bool {
+			pi, pj := physNIC.MatchString(nics[i]), physNIC.MatchString(nics[j])
+			if pi != pj {
+				return pi
+			}
+			return nics[i] < nics[j]
+		})
+		for _, nic := range nics {
+			n := s.Network[nic]
 			for _, a := range n.Addresses {
 				if a.Scope != "global" {
 					continue
@@ -267,6 +282,12 @@ func (r rawInstance) convert() Instance {
 	}
 	return in
 }
+
+var (
+	// networks a machine carries for its own containers or VMs: never its address
+	innerNIC = regexp.MustCompile(`^(docker\d*|br-[0-9a-f]+|veth.*|cni\d*|flannel.*|cali.*|vxlan.*|virbr\d*|lxcbr\d*|lxdbr\d*|incusbr\d*|podman\d*|kube-.*|tun\d*|wg\d*)$`)
+	physNIC  = regexp.MustCompile(`^(eth|en[ospx])`)
+)
 
 // "tcp:0.0.0.0:8080" → ("tcp", 8080)
 func splitAddr(s string) (string, int) {
@@ -316,6 +337,7 @@ type CreateSpec struct {
 	MemoryMB int    `json:"memory_mb"`
 	DiskGB   int    `json:"disk_gb"`
 	UserData string `json:"user_data,omitempty"` // cloud-init (SSH keys, password)
+	LAN      string `json:"lan,omitempty"`       // a host port: on the LAN from the start (else NAT)
 	Note     string `json:"note,omitempty"`
 	Start    bool   `json:"start"`
 }
@@ -333,10 +355,18 @@ func (c *Client) Create(ctx context.Context, s CreateSpec) error {
 	if s.UserData != "" {
 		cfg["cloud-init.user-data"] = s.UserData
 	}
+	devs := map[string]any{"root": map[string]string{"type": "disk", "path": "/", "pool": "default", "size": fmt.Sprintf("%dGiB", s.DiskGB)}}
+	if s.LAN != "" { // its own address from the router, set before the first boot: no second step
+		nic, err := lanNIC(s.LAN)
+		if err != nil {
+			return err
+		}
+		devs["eth0"] = nic
+	}
 	body := map[string]any{
 		"name": s.Name, "type": typ, "description": s.Note, "config": cfg, "start": false,
 		"source":  map[string]any{"type": "image", "alias": s.Image, "server": "https://images.linuxcontainers.org", "protocol": "simplestreams"},
-		"devices": map[string]any{"root": map[string]string{"type": "disk", "path": "/", "pool": "default", "size": fmt.Sprintf("%dGiB", s.DiskGB)}},
+		"devices": devs,
 	}
 	e, err := c.do(ctx, "POST", "/1.0/instances", body, nil)
 	if err != nil {

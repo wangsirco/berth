@@ -12,7 +12,7 @@ import { ago, duration } from '@/lib/format'
 import { useApi, useInterval } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
-import { requestTerminal } from '@/pages/terminal/store'
+import { openTerminal } from '@/pages/terminal/store'
 
 interface FileStat { path: string; add: number; del: number; binary?: boolean }
 interface Result { text: string; is_error?: boolean; cost_usd: number; turns: number; duration_ms: number; files: FileStat[]; diff_cut?: boolean; error?: { code: string; params?: Record<string, unknown> } }
@@ -25,7 +25,7 @@ interface ClaudeData { enabled: boolean; mode: 'auto' | 'edits'; auth: 'login' |
 const TONE: Record<Task['status'], 'ok' | 'warn' | 'bad' | 'acc' | undefined> = { queued: undefined, running: 'acc', done: 'ok', asking: 'warn', failed: 'bad', canceled: undefined }
 
 // openClaude: the workspace's resident Claude conversation in the panel terminal
-export const openClaude = (name: string) => requestTerminal({ target: 'dev', container: name, program: 'claude' })
+export const openClaude = (name: string) => openTerminal({ target: 'dev', container: name, program: 'claude' })
 
 export function ClaudeBox({ name, up, focusTask }: { name: string; up: boolean; focusTask?: number }) {
   const t = useT()

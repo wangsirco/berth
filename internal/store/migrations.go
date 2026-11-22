@@ -292,4 +292,12 @@ var migrations = []string{
 		ip TEXT NOT NULL, country TEXT NOT NULL DEFAULT '', dest TEXT NOT NULL, port INTEGER NOT NULL, net TEXT NOT NULL, status TEXT NOT NULL, count INTEGER NOT NULL);
 	 CREATE INDEX proxy_access_ts ON proxy_access(ts);
 	 CREATE INDEX proxy_access_user ON proxy_access(user_id, ts)`,
+	// v48: 面板互联——main：我们管对方面板交出的服务器；managed：我们的服务器交给对方面板管。
+	// 配对用一次性密钥 + X25519 交换出互联密钥（密钥本身不在网上传），之后每个请求都用它签名
+	`CREATE TABLE panel_links (id INTEGER PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '', slug TEXT NOT NULL DEFAULT '', addrs TEXT NOT NULL DEFAULT '[]', fp TEXT NOT NULL DEFAULT '',
+		uid TEXT NOT NULL DEFAULT '', key_enc BLOB, secret_hash TEXT NOT NULL DEFAULT '', priv_enc BLOB, sas TEXT NOT NULL DEFAULT '',
+		hosts TEXT NOT NULL DEFAULT '[]', by_user TEXT NOT NULL DEFAULT '', by_id INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0, confirmed_at INTEGER NOT NULL DEFAULT 0, last_addr TEXT NOT NULL DEFAULT '');
+	 CREATE INDEX panel_links_uid ON panel_links(uid)`,
 }

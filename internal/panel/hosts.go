@@ -192,6 +192,13 @@ var joinScript = `#!/bin/sh
 # Berth: join this machine to %[1]s as host "%[2]s"
 set -eu
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+# a server with its own Berth panel: its agent belongs to that panel; taking it over (and
+# replacing the berth program the panel runs) would leave that panel without its server
+if [ -f /etc/systemd/system/berth-panel.service ] || systemctl cat berth-panel.service >/dev/null 2>&1; then
+  echo "这台服务器已经装了 Berth 面板，不能作为主机加入另一个面板（会让它自己的面板失去对这台服务器的控制）。什么也没改。" >&2
+  echo "This server runs its own Berth panel; it cannot join another panel as a host (its own panel would lose it). Nothing was changed." >&2
+  exit 2
+fi
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2; exit 1 ;; esac
 CA=/tmp/berth-ca.crt
 curl -fsS --cacert "$CA" -o /usr/local/bin/berth.new "%[1]s/join/%[3]s/berth?arch=$ARCH"

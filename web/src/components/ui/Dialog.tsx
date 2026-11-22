@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { useT } from '@/lib/i18n'
 import { cx } from './cx'
 
-const backdrop = 'fixed inset-0 z-40 bg-black/25 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity duration-150'
+const backdrop = 'fixed inset-0 z-40 bg-black/35 backdrop-blur-[2px] data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity duration-150'
 const shadow = 'shadow-[0_1px_3px_rgba(31,35,40,.12),0_8px_24px_rgba(66,74,83,.18)]'
 
 // Dialog: a centred modal, 12px corners (方案 §10.3).

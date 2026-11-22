@@ -30,7 +30,8 @@ func (a *App) Handler() http.Handler {
 	a.registerRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.HandleFunc("/", a.handleStatic)
-	return a.securityHeaders(a.networkGate(a.entryGate(mux)))
+	a.apiMux = mux
+	return a.securityHeaders(a.networkGate(a.entryGate(a.peerRoute(mux))))
 }
 
 // registerRoutes is where feature modules add their routes.
@@ -75,7 +76,7 @@ func (a *App) networkGate(h http.Handler) http.Handler {
 // own (one-time join code or a signed request) and answers a bare 404 otherwise.
 func remoteAgentPath(p string) bool {
 	// each of these proves itself (join codes, signed webhooks, migration-code bearer tokens)
-	return strings.HasPrefix(p, "/join/") || strings.HasPrefix(p, "/hooks/pipelines/") || strings.HasPrefix(p, "/hooks/native/") || strings.HasPrefix(p, "/migrate/pull/") || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/sub/") || strings.HasPrefix(p, "/api/ext/wharf/") || p == "/api/v1/agents/enroll" || p == "/api/v1/agents/connect" || p == "/api/v1/agents/binary" || p == "/api/v1/ca.crt"
+	return strings.HasPrefix(p, "/join/") || strings.HasPrefix(p, "/link-api/") || strings.HasPrefix(p, "/hooks/pipelines/") || strings.HasPrefix(p, "/hooks/native/") || strings.HasPrefix(p, "/migrate/pull/") || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/sub/") || strings.HasPrefix(p, "/api/ext/wharf/") || p == "/api/v1/agents/enroll" || p == "/api/v1/agents/connect" || p == "/api/v1/agents/binary" || p == "/api/v1/ca.crt"
 }
 
 func (a *App) entryToken(entry string) string {

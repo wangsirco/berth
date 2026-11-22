@@ -146,6 +146,7 @@ func init() {
 			out := map[string]any{"paired": false, "berth_fp": a.caFP()}
 			if l, err := a.wharf(); err == nil {
 				out["paired"], out["link"] = true, l
+				out["live"] = a.wharfLive(r.Context(), l.URL, l.FP) // LAN or internet, latency, where it is
 				maps := []map[string]any{}
 				rows, err := a.db.Query(`SELECT m.wharf_user, u.username FROM wharf_user_map m JOIN users u ON u.id = m.berth_user_id ORDER BY m.wharf_user`)
 				if err == nil {

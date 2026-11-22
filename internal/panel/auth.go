@@ -137,6 +137,15 @@ func (a *App) userActor(r *http.Request, u *User) change.Actor {
 // session writes, and perm (if non-empty).
 func (a *App) authed(perm string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// a linked main panel's request, already verified and limited to the handed-over servers
+		if li := linkFrom(r); li != nil {
+			if perm != "" && !li.user.Can(perm) {
+				a.fail(w, r, errs.New(403, "auth.forbidden", "perm", perm))
+				return
+			}
+			h(w, withIdentity(r, li.user, li.actor, nil))
+			return
+		}
 		if hasBearer(r) {
 			r2, err := a.bearerAuth(r, perm)
 			if err != nil {

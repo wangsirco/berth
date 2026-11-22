@@ -41,6 +41,8 @@ var vmSizes = map[string][3]int{"small": {1, 512, 10}, "medium": {2, 2048, 20}, 
 
 // ---- SSH keys (per person; used for new machines, dev containers, workspaces) ----
 
+var ifaceRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,15}$`) // a Linux interface name
+
 var sshKeyRe = regexp.MustCompile(`^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]{40,}( [^\r\n]{0,200})?$`)
 
 func (a *App) sshKeys(uid int64) []map[string]any {
@@ -220,20 +222,22 @@ func init() {
 		"size": {Type: "string", Enum: []string{"small", "medium", "large", "custom"}}, "cpus": {Type: "integer"}, "memory_mb": {Type: "integer"}, "disk_gb": {Type: "integer"},
 		"note": {Type: "string"}, "key_ids": {Type: "array", Desc: "which of my SSH keys go to root (default: all)"},
 		"ssh_key": {Type: "string", Desc: "another public key for root"}, "password": {Type: "string", Desc: "root password (default: generated)"},
-		"password_ssh": {Type: "boolean", Desc: "allow SSH login as root with the password (default: only when no key)"}}
+		"password_ssh": {Type: "boolean", Desc: "allow SSH login as root with the password (default: only when no key)"},
+		"lan":          {Type: "string", Desc: "a host port (e.g. end0): its own LAN address from the router instead of NAT"}}
 	type createParams struct {
 		KeyIDs      *[]int64 `json:"key_ids"`
 		SSHKey      string   `json:"ssh_key"`
 		Password    string   `json:"password"`
 		PasswordSSH *bool    `json:"password_ssh"`
-		Name     string `json:"name"`
-		Image    string `json:"image"`
-		VM       bool   `json:"vm"`
-		Size     string `json:"size"`
-		CPUs     int    `json:"cpus"`
-		MemoryMB int    `json:"memory_mb"`
-		DiskGB   int    `json:"disk_gb"`
-		Note     string `json:"note"`
+		LAN         string   `json:"lan"`
+		Name        string   `json:"name"`
+		Image       string   `json:"image"`
+		VM          bool     `json:"vm"`
+		Size        string   `json:"size"`
+		CPUs        int      `json:"cpus"`
+		MemoryMB    int      `json:"memory_mb"`
+		DiskGB      int      `json:"disk_gb"`
+		Note        string   `json:"note"`
 	}
 	normalize := func(a *App, env change.Env, raw json.RawMessage) (createParams, incus.Image, error) {
 		var p createParams
@@ -262,6 +266,9 @@ func init() {
 		}
 		if p.VM && p.MemoryMB < 512 {
 			return p, img, errs.New(400, "vm.bad_size")
+		}
+		if p.LAN != "" && !ifaceRe.MatchString(p.LAN) {
+			return p, img, errs.New(400, "params.invalid", "name", "lan")
 		}
 		p.SSHKey = strings.TrimSpace(strings.ReplaceAll(p.SSHKey, "\r", ""))
 		if p.SSHKey != "" && !sshKeyRe.MatchString(p.SSHKey) {
@@ -311,10 +318,14 @@ func init() {
 			if p.VM {
 				kind = "plan.vm.create_vm"
 			}
-			return change.Plan{Summary: kind, SummaryP: map[string]any{"name": p.Name, "image": img.Name, "cpus": p.CPUs, "mem": p.MemoryMB, "disk": p.DiskGB},
-				Risk: change.RiskLow, Undoable: true,
-				Commands: []string{fmt.Sprintf("incus launch images:%s %s%s -c limits.cpu=%d -c limits.memory=%dMiB -d root,size=%dGiB",
-					img.Alias, p.Name, map[bool]string{true: " --vm"}[p.VM], p.CPUs, p.MemoryMB, p.DiskGB)}}, nil
+			cmd := fmt.Sprintf("incus launch images:%s %s%s -c limits.cpu=%d -c limits.memory=%dMiB -d root,size=%dGiB",
+				img.Alias, p.Name, map[bool]string{true: " --vm"}[p.VM], p.CPUs, p.MemoryMB, p.DiskGB)
+			if p.LAN != "" {
+				kind += "_lan"
+				cmd += " -d eth0,nictype=macvlan,parent=" + p.LAN
+			}
+			return change.Plan{Summary: kind, SummaryP: map[string]any{"name": p.Name, "image": img.Name, "cpus": p.CPUs, "mem": p.MemoryMB, "disk": p.DiskGB, "port": p.LAN},
+				Risk: change.RiskLow, Undoable: true, Commands: []string{cmd}}, nil
 		},
 		Apply: func(env change.Env, raw json.RawMessage) (any, *change.UndoRecipe, error) {
 			a := svc(env)
@@ -352,7 +363,7 @@ func init() {
 			if p.PasswordSSH != nil {
 				pwSSH = *p.PasswordSSH
 			}
-			spec := incus.CreateSpec{Name: p.Name, Image: img.Alias, VM: p.VM, CPUs: p.CPUs, MemoryMB: p.MemoryMB, DiskGB: p.DiskGB, Note: p.Note, Start: true}
+			spec := incus.CreateSpec{Name: p.Name, Image: img.Alias, VM: p.VM, CPUs: p.CPUs, MemoryMB: p.MemoryMB, DiskGB: p.DiskGB, Note: p.Note, LAN: p.LAN, Start: true}
 			if img.Cloud {
 				spec.UserData = cloudInit(img.OS, keys, password, pwSSH)
 			}

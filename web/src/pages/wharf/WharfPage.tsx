@@ -8,6 +8,7 @@ import { cx } from '@/components/ui/cx'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
+import { ConnBadge, LiveLine } from '../links/LinksPage'
 import { useEvents } from '@/lib/useEvents'
 import { WharfPair, WharfPaired, type WharfStatus } from '../network/NetworkPage'
 import { PortCheck } from './PortCheck'
@@ -27,7 +28,8 @@ export default function WharfPage() {
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-box)] border border-line bg-card px-4 py-3">
           <WharfMark className="size-8" />
-          <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{t('wharfp.paired_with', { name: st.data.link.name })}</div><div className="num truncate text-[12px] text-mute">{st.data.link.url}</div></div>
+          <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{t('wharfp.paired_with', { name: st.data.link.name })}</div><div className="num truncate text-[12px] text-mute">{st.data.link.url}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2"><ConnBadge live={st.data.live} /><LiveLine live={st.data.live} /></div></div>
           <a href={st.data.link.url} target="_blank" rel="noreferrer"><Button size="sm" variant="primary"><ExternalLink className="size-3.5" />{t('wharf.open')}</Button></a>
           <a href={REPO} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Github className="size-3.5" />GitHub</Button></a>
         </div>
