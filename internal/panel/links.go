@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangsirco/berth/internal/panel/wharfapi"
 	"io"
 	"net/http"
 	"net/url"
@@ -134,7 +135,7 @@ type linkCode struct {
 	FP    string   `json:"fp"`
 	S     string   `json:"s"` // one-time secret
 	Name  string   `json:"n"`
-	Pub   string   `json:"k"` // X25519 public key (base64)
+	Pub   string   `json:"k"`           // X25519 public key (base64)
 	Mode  string   `json:"m,omitempty"` // lan | public: which names both sides use
 }
 
@@ -328,6 +329,9 @@ func (a *App) linkCall(ctx context.Context, l *panelLink, method, path string, i
 	}
 	if last == nil {
 		last = errors.New("no address")
+	}
+	if errors.Is(last, wharfapi.ErrAccess) { // the peer's public name is behind Cloudflare Access
+		return errs.New(502, "link.peer_access")
 	}
 	return errs.New(502, "link.unreachable", "detail", last.Error())
 }

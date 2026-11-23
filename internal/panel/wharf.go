@@ -110,6 +110,9 @@ func (a *App) wharfErr(err error) error {
 	}
 	var we *wharfapi.Error
 	if errors.As(err, &we) {
+		if we.Access {
+			return errs.New(502, "wharf.peer_access")
+		}
 		if we.Status == 401 {
 			a.db.Exec(`UPDATE wharf_link SET state='broken' WHERE id=1`)
 			return errs.New(502, "wharf.link_broken", "detail", we.Message)

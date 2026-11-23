@@ -5145,5 +5145,7 @@
  "wstats.wan_port": "外網連接埠 {port}",
  "wstats.world": "流向世界",
  "wstats.world_d": "按流量排序；世界地圖在 Wharf 裡看",
- "wstats.world_t": "家裡在和哪些國家通訊"
+ "wstats.world_t": "家裡在和哪些國家通訊",
+ "wharf.peer_access": "Wharf 的這個名稱開了 Cloudflare Access（電子郵件驗證），沒有放行面板之間的介面，Berth 呼叫會被擋住。請在 Wharf 的 Access 設定裡放行 /api/ext/berth/，或改用內網互聯。",
+ "link.peer_access": "對方面板的公網名稱開了 Cloudflare Access（電子郵件驗證），沒有放行面板之間的介面。請對方升級到 1.6.5 以上（會自動放行），或改用內網互聯。"
 }

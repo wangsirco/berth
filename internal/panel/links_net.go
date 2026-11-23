@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"github.com/wangsirco/berth/internal/panel/wharfapi"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -42,7 +43,7 @@ func linkClient(fp string) *http.Client {
 		ForceAttemptHTTP2:   false,
 		TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{}, // HTTP/1.1 only
 	}
-	c := &http.Client{Transport: tr}
+	c := &http.Client{Transport: tr, CheckRedirect: wharfapi.NoAccessRedirect} // a peer behind Cloudflare Access: say so
 	linkClients.m[fp] = c
 	return c
 }

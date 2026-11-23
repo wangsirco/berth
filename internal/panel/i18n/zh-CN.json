@@ -1885,5 +1885,7 @@
  "cf.no_panel_tunnel": "面板没有通过隧道开放",
  "cf.bad_panel_name": "名字不对：要像 panel.example.com 这样",
  "cf.panel_name_used": "{name} 已经被一个网站用了，换个名字",
- "auth.no_factor_here": "这个账号要求二步验证，但它的 Passkey 在 {names} 上，在这个地址用不了。请先用那个地址登录，在「账号」里为这个地址添加 Passkey 或设置验证器 App。"
+ "auth.no_factor_here": "这个账号要求二步验证，但它的 Passkey 在 {names} 上，在这个地址用不了。请先用那个地址登录，在「账号」里为这个地址添加 Passkey 或设置验证器 App。",
+ "wharf.peer_access": "Wharf 的这个名字开了 Cloudflare Access（邮箱验证），没有放行面板之间的接口，Berth 调用会被挡住。请在 Wharf 的 Access 设置里放行 /api/ext/berth/，或改用内网互联。",
+ "link.peer_access": "对方面板的公网名字开了 Cloudflare Access（邮箱验证），没有放行面板之间的接口。请对方升级到 1.6.5 以上（会自动放行），或改用内网互联。"
 }

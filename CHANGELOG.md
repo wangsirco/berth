@@ -2,6 +2,18 @@
 
 简体中文在前，English below each version.
 
+## 1.6.5 · 2026-11-24
+
+**开了邮箱验证（Cloudflare Access），面板之间照样能连**
+- 经 Cloudflare 隧道开放面板并勾选邮箱验证时，面板会同时建一条放行规则，只放行机器之间调用的接口：Wharf、互联的面板、远程主机加入和连接、部署钩子、迁移、订阅链接、状态页、CA 证书下载。这些接口本来就各自校验签名或一次性码。人打开面板仍然要先过邮箱验证。
+- 用 1.6.3 / 1.6.4 开过邮箱验证的面板，升级后会自动补上这条放行规则。
+- 对方的公网名字开了 Access、但没放行接口时，会明确说是 Cloudflare Access 挡住了，不再只报「连不上」。把 Wharf 改为公网互联前会先试一次，被挡住就不切换。
+
+---
+
+- With Cloudflare Access on the panel's tunnel name, a second Access app lets the machine endpoints through (Wharf, linked panels, remote hosts, hooks, migration, subscriptions, status pages, the CA download); people still get the email check. Panels published with Access by 1.6.3/1.6.4 get it added after the upgrade.
+- A peer whose public name is behind Access without such a bypass is reported as such instead of "unreachable"; switching the Wharf link to the internet checks this first.
+
 ## 1.6.4 · 2026-11-24
 
 **经隧道 / 公网名字登录：Passkey 跟着名字走，不再卡在「还差一步」**

@@ -222,7 +222,7 @@ func (f *Fake) serveExtra(w http.ResponseWriter, r *http.Request, p []string) bo
 			write(w, 200, out, nil)
 		case len(p) == 4 && r.Method == "POST":
 			id := f.id("app-")
-			a := map[string]any{"id": id, "name": body["name"], "domain": body["domain"]}
+			a := map[string]any{"id": id, "name": body["name"], "domain": body["domain"], "self_hosted_domains": body["self_hosted_domains"]}
 			f.AccessApps[id] = a
 			write(w, 200, a, nil)
 		case len(p) == 6 && p[5] == "policies" && r.Method == "POST":

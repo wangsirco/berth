@@ -70,7 +70,7 @@ func (a *App) clearPanelTunnel() {
 	if th == "" {
 		return
 	}
-	for _, k := range []string{"access.tunnel_host", "access.tunnel_dns", "access.tunnel_entry", "access.tunnel_access"} {
+	for _, k := range []string{"access.tunnel_host", "access.tunnel_dns", "access.tunnel_entry", "access.tunnel_access", "access.tunnel_bypass"} {
 		a.setSetting(k, "")
 	}
 	if strings.EqualFold(a.setting("panel.public_host"), th) {
@@ -206,6 +206,9 @@ func init() {
 					a.db.Exec(`INSERT INTO cf_access(domain, spec) VALUES(?,?)`, p.Hostname, string(s))
 					a.setSetting("access.tunnel_access", p.Hostname)
 				}
+				if err := a.ensureTunnelBypass(env.Ctx); err != nil {
+					return nil, nil, err
+				}
 			}
 			env.Log("::step 4 edge")
 			a.entrySync(env.Ctx)
@@ -231,6 +234,7 @@ func (a *App) panelTunnelOff(env change.Env) (any, *change.UndoRecipe, error) {
 	th := a.setting("access.tunnel_host")
 	t, _, _ := a.tunnelOf(env.Host)
 	undo, _ := json.Marshal(map[string]any{"on": true, "integration": t.Integration, "hostname": th, "entry": a.setting("access.tunnel_entry") != "off"})
+	a.dropTunnelBypass(env.Ctx)
 	if ad := a.setting("access.tunnel_access"); ad != "" {
 		var spec string
 		if a.db.QueryRow(`SELECT spec FROM cf_access WHERE domain=?`, ad).Scan(&spec) == nil {
@@ -252,4 +256,51 @@ func (a *App) panelTunnelOff(env change.Env) (any, *change.UndoRecipe, error) {
 	}
 	a.clearPanelTunnel()
 	return nil, &change.UndoRecipe{Kind: "cf.tunnel.panel", Params: undo}, nil
+}
+
+// bypassPaths: what other panels, remote hosts and clients call on the panel's public name.
+// Each proves itself (signed requests, one-time codes, tokens); behind Cloudflare Access they
+// would get the email sign-in page instead. Status pages and subscriptions are public anyway.
+var bypassPaths = []string{"/api/ext/wharf", "/link-api", "/join", "/api/v1/agents", "/hooks", "/migrate/pull", "/sub", "/status", "/api/v1/ca.crt"}
+
+// ensureTunnelBypass: with Access on the panel's tunnel name, its machine endpoints skip
+// Access (made with the Access app; added later for tunnels made before this existed)
+func (a *App) ensureTunnelBypass(ctx context.Context) error {
+	host := a.setting("access.tunnel_access")
+	if host == "" || a.setting("access.tunnel_bypass") != "" {
+		return nil
+	}
+	cf, err := a.cloudflare(a.setting("access.tunnel_dns"))
+	if err != nil {
+		return err
+	}
+	acc, err := a.cfAccount(ctx, cf)
+	if err != nil {
+		return err
+	}
+	var paths []string
+	for _, p := range bypassPaths {
+		paths = append(paths, host+p)
+	}
+	app, err := cf.CreateAccessBypass(ctx, acc, "Berth: "+host+" (panel APIs)", paths)
+	if err != nil {
+		return dnsErr(err)
+	}
+	a.setSetting("access.tunnel_bypass", acc+"/"+app.ID)
+	return nil
+}
+
+func (a *App) dropTunnelBypass(ctx context.Context) {
+	acc, id, ok := strings.Cut(a.setting("access.tunnel_bypass"), "/")
+	if !ok {
+		return
+	}
+	if cf, err := a.cloudflare(a.setting("access.tunnel_dns")); err == nil {
+		if err := cf.DeleteAccessApp(ctx, acc, id); err != nil {
+			if e, ok := err.(*dns.Error); !ok || e.Code != "dns.not_found" {
+				return // try again next time
+			}
+		}
+	}
+	a.setSetting("access.tunnel_bypass", "")
 }

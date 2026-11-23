@@ -243,6 +243,9 @@ func (a *App) edgeLoop(ctx context.Context) {
 			c, cancel := context.WithTimeout(ctx, 60*time.Second)
 			a.entrySync(c) // the panel's names on 443 follow name changes and renewals
 			cancel()
+			c, cancel = context.WithTimeout(ctx, 30*time.Second)
+			a.ensureTunnelBypass(c) // Access on the tunnel name lets the panel APIs through
+			cancel()
 		}
 	}
 }

@@ -132,6 +132,24 @@ func (c *Cloudflare) CreateAccessApp(ctx context.Context, account, domain string
 	return app, nil
 }
 
+// CreateAccessBypass: an Access app for paths of a name that skip Access (machine-to-machine
+// endpoints that authenticate themselves). More specific paths win over the name's own app.
+// paths are host/path, e.g. panel.example.com/api/ext/wharf.
+func (c *Cloudflare) CreateAccessBypass(ctx context.Context, account, name string, paths []string) (AccessApp, error) {
+	var app AccessApp
+	base := "/accounts/" + url.PathEscape(account) + "/access/apps"
+	if _, err := c.do(ctx, "POST", base, nil, map[string]any{"name": name, "domain": paths[0], "self_hosted_domains": paths, "type": "self_hosted",
+		"session_duration": "24h", "app_launcher_visible": false}, &app); err != nil {
+		return app, err
+	}
+	if _, err := c.do(ctx, "POST", base+"/"+url.PathEscape(app.ID)+"/policies", nil,
+		map[string]any{"name": "Berth bypass", "decision": "bypass", "include": []map[string]any{{"everyone": map[string]any{}}}, "precedence": 1}, nil); err != nil {
+		c.DeleteAccessApp(ctx, account, app.ID)
+		return app, err
+	}
+	return app, nil
+}
+
 func (c *Cloudflare) DeleteAccessApp(ctx context.Context, account, id string) error {
 	_, err := c.do(ctx, "DELETE", "/accounts/"+url.PathEscape(account)+"/access/apps/"+url.PathEscape(id), nil, nil, nil)
 	return err

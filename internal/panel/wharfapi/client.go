@@ -33,6 +33,7 @@ const Prefix = "/api/ext/berth/v1"
 type Error struct {
 	Status  int
 	Message string
+	Access  bool // stopped by Cloudflare Access on Wharf's name
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("wharf %d: %s", e.Status, e.Message) }
@@ -56,7 +57,22 @@ func pinned(fp string) *tls.Config { return tlsutil.PinOrPublic(fp) }
 
 func httpClient(fp string) *http.Client {
 	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: pinned(fp),
-		DialContext: (&net.Dialer{Timeout: 8 * time.Second}).DialContext}}
+		DialContext: (&net.Dialer{Timeout: 8 * time.Second}).DialContext}, CheckRedirect: NoAccessRedirect}
+}
+
+// ErrAccess: the peer's name is behind Cloudflare Access (an email sign-in page) that does not
+// let the panel APIs through
+var ErrAccess = errors.New("cloudflare access")
+
+// NoAccessRedirect: a client's CheckRedirect that stops at Cloudflare Access' sign-in page
+func NoAccessRedirect(req *http.Request, via []*http.Request) error {
+	if h := strings.ToLower(req.URL.Hostname()); strings.HasSuffix(h, ".cloudflareaccess.com") || strings.HasPrefix(req.URL.Path, "/cdn-cgi/access/") {
+		return ErrAccess
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 // Chain connects once (without trusting anything) and returns the certificates Wharf
@@ -210,7 +226,7 @@ func (c *Client) Do(ctx context.Context, method, path, actor string, in, out any
 func finish(hc *http.Client, req *http.Request, out any) error {
 	resp, err := hc.Do(req)
 	if err != nil {
-		return &Error{Status: 0, Message: err.Error()}
+		return &Error{Status: 0, Message: err.Error(), Access: errors.Is(err, ErrAccess)}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))

@@ -5145,5 +5145,7 @@
  "wstats.wan_port": "WAN port {port}",
  "wstats.world": "World",
  "wstats.world_d": "By traffic; the world map is in Wharf",
- "wstats.world_t": "Countries the home talks to"
+ "wstats.world_t": "Countries the home talks to",
+ "wharf.peer_access": "Wharf's name is behind Cloudflare Access (email sign-in) without letting the panel APIs through. Let /api/ext/berth/ bypass Access on Wharf, or link over the LAN.",
+ "link.peer_access": "The other panel's public name is behind Cloudflare Access without letting the panel APIs through. Upgrade it to 1.6.5 or later (lets them through), or link over the LAN."
 }

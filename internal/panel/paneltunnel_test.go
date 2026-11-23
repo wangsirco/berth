@@ -1,7 +1,14 @@
 package panel
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
 	"net/http/httptest"
+
+	"github.com/wangsirco/berth/internal/errs"
+	"github.com/wangsirco/berth/internal/panel/wharfapi"
 	"testing"
 	"time"
 )
@@ -49,8 +56,19 @@ func TestPanelThroughTunnel(t *testing.T) {
 	if ing := cf.Ingress[tid]; len(ing) != 2 || ing[0].(map[string]any)["hostname"] != "panel.example.com" {
 		t.Fatalf("%v", ing)
 	}
-	if len(cf.AccessApps) != 1 {
+	// the email sign-in for people, and the panel APIs let through (other panels, hosts)
+	if len(cf.AccessApps) != 2 || c.app.setting("access.tunnel_bypass") == "" {
 		t.Fatalf("access: %v", cf.AccessApps)
+	}
+	bypassed := false
+	for id, app := range cf.AccessApps {
+		if d, _ := app["self_hosted_domains"].([]any); len(d) > 0 && d[0] == "panel.example.com/api/ext/wharf" {
+			pol := cf.Policies[id]
+			bypassed = len(pol) == 1 && pol[0].(map[string]any)["decision"] == "bypass"
+		}
+	}
+	if !bypassed {
+		t.Fatalf("no bypass for the panel APIs: %v %v", cf.AccessApps, cf.Policies)
 	}
 	if c.app.setting("panel.public_host") != "panel.example.com" || c.app.setting("access.tunnel_access") != "panel.example.com" || !c.app.exposed() {
 		t.Fatal("settings")
@@ -122,5 +140,22 @@ func TestSecondStepFollowsTheName(t *testing.T) {
 	u.LoginMode = LoginPassword2FA
 	if s := at("panel.example.com"); s == "full" || s == "second_step" {
 		t.Fatalf("explicit 2FA on a name without a factor: %s", s)
+	}
+}
+
+// a peer whose name sits behind Cloudflare Access: said so, not "cannot connect"
+func TestPeerBehindAccess(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://team.cloudflareaccess.com/cdn-cgi/access/login/x", http.StatusFound)
+	}))
+	defer srv.Close()
+	h := sha256.Sum256(srv.Certificate().Raw)
+	_, err := wharfapi.New(srv.URL, hex.EncodeToString(h[:]), "tok").Ping(context.Background())
+	we, ok := err.(*wharfapi.Error)
+	if !ok || !we.Access {
+		t.Fatalf("%v", err)
+	}
+	if e := (&App{}).wharfErr(err); errs.From(e).Code != "wharf.peer_access" {
+		t.Fatalf("%v", e)
 	}
 }

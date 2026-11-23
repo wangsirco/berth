@@ -195,6 +195,15 @@ func init() {
 				a.fail(w, r, errs.New(400, "wharf.mode_wrong_cert", "url", target))
 				return
 			}
+			// over the internet the other side's name may sit behind Cloudflare Access
+			probe := *l
+			probe.URL = target
+			if _, err := probe.api().Ping(ctx); err != nil {
+				if we, ok := err.(*wharfapi.Error); ok && we.Access {
+					a.fail(w, r, errs.New(409, "wharf.peer_access"))
+					return
+				}
+			}
 			mine := a.berthAddrsFor(mode, u.Hostname())
 			if len(mine) == 0 {
 				a.fail(w, r, errs.New(409, "wharf.no_public_name"))
@@ -221,7 +230,6 @@ func init() {
 		}))
 	})
 }
-
 
 func nonNilS(s []string) []string {
 	if s == nil {
