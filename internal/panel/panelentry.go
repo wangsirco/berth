@@ -170,8 +170,12 @@ func (a *App) entryKey() string {
 	if p == nil {
 		return "none"
 	}
-	return strings.Join(p.LANHosts, ",") + "|" + strings.Join(p.PublicHosts, ",") + "|" + p.Cert.Version
+	return strings.Join(p.LANHosts, ",") + "|" + strings.Join(p.PublicHosts, ",") + "|" + p.Cert.Version + "|" + entryRev
 }
+
+// entryRev: bumped when the edge's panel route itself changes, so upgrades load it again
+// (2: the browser's host name is passed on)
+const entryRev = "2"
 
 // entrySync loads the edge again when the panel's names changed; afterwards the names
 // open the panel without a port (entryServes)

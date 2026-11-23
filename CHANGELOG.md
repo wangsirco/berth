@@ -2,6 +2,18 @@
 
 简体中文在前，English below each version.
 
+## 1.6.1 · 2026-11-23
+
+**修复：用 `https://mini.local`（不带端口）打开面板，进了安全入口马上跳到 404**
+- 原因：经网站入口转给面板时，面板看到的地址是入口内部用的名字，不是你打开的 `mini.local`。于是面板以为你不在主名字上，把你送去一个跳转链接；跳转链接又因为同样的原因认不出来，就显示了 404。
+- 现在入口会把你打开的名字原样转给面板：不再乱跳，Passkey 也认得这个名字。
+- 页面这边也加了保护：已经在主名字上时，绝不再跳。
+- 升级后入口会自动重新加载，不用做什么。
+
+---
+
+- Fix: opening the panel at https://mini.local (no port) bounced to a 404 right after the security entry. The edge now passes the browser's host name to the panel (also what Passkey checks), and the page never moves when it is already on the main name.
+
 ## 1.6.0 · 2026-11-23
 
 **一个面板，一个名字，不用记 IP 和端口**

@@ -28,6 +28,7 @@ export function GoToMainName({ onUnreachable }: { onUnreachable?: (w: Where) => 
       const w = await get<Where>('/api/v1/access/where').catch(() => null)
       if (!w || w.setup || w.is_main || !w.lan || skipped()) return
       if (w.public_name && w.current === w.public_name) return // opened from outside by the public name: stay
+      if (new URL(w.lan).hostname === location.hostname) return // already on it (whatever the server saw): never loop
       if (!(await reachable(w.lan))) { if (live) onUnreachable?.(w); return }
       const h = await get<{ url: string }>('/api/v1/access/hop?to=lan&path=' + encodeURIComponent(location.pathname + location.search)).catch(() => null)
       if (live && h?.url) location.replace(h.url)

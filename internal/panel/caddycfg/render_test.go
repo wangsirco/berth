@@ -410,7 +410,7 @@ func TestPanelEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{`"mini.lan"`, `"panel.example.com"`, `host.docker.internal:7090`, `"X-Berth-Edge"`, `"s3cret"`, `"berth-panel-abc123abc123"`, `"insecure_skip_verify": true`, `"sni"`} {
+	for _, want := range []string{`"mini.lan"`, `"panel.example.com"`, `host.docker.internal:7090`, `"X-Berth-Edge"`, `"s3cret"`, `"{http.request.host}"`, `"berth-panel-abc123abc123"`, `"insecure_skip_verify": true`, `"sni"`} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %s in\n%s", want, s)
 		}

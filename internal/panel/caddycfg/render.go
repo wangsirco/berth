@@ -157,6 +157,9 @@ func Render(sites []Site, env Env) ([]byte, error) {
 			"transport":      obj{"protocol": "http", "tls": obj{"insecure_skip_verify": true}},
 			"flush_interval": -1, // live events and terminals stream
 			"headers": obj{"request": obj{"set": obj{
+				// the name the browser used, not the upstream's: the panel picks the main name,
+				// the hop links and Passkey's relying party by it
+				"Host":              []string{"{http.request.host}"},
 				"X-Berth-Edge":      []string{p.Secret},
 				"X-Forwarded-Proto": []string{"https"},
 			}}}}
