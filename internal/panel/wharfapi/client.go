@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,21 +96,41 @@ type CertInfo struct {
 
 // ---- pairing ----
 
-// ExchangeRequest is what Berth sends with the one-time code (no token yet).
+// ExchangeRequest is what Berth sends with the one-time code (no token yet). Wharf reads
+// {code, token, name} (its docs/BERTH.md §3); the rest is for older or other readers.
 type ExchangeRequest struct {
 	Code       string `json:"code"`
-	BerthToken string `json:"berth_token"` // the berth_wrf_ token Wharf will use to call Berth
-	BerthName  string `json:"berth_name"`
+	BerthToken string `json:"token"` // the berth_wrf_ token Wharf will use to call Berth
+	BerthName  string `json:"name"`
 	BerthURL   string `json:"berth_url"`
 	BerthFP    string `json:"berth_fp"`
+}
+
+// MarshalJSON also sends the token and name under their earlier keys.
+func (r ExchangeRequest) MarshalJSON() ([]byte, error) {
+	type plain ExchangeRequest
+	return json.Marshal(struct {
+		plain
+		OldToken string `json:"berth_token"`
+		OldName  string `json:"berth_name"`
+	}{plain(r), r.BerthToken, r.BerthName})
+}
+
+// Target is a Berth host Wharf lets forwards point at.
+type Target struct {
+	IP   string `json:"ip"`
+	MAC  string `json:"mac,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 type ExchangeResult struct {
 	Token     string   `json:"token"` // wharf_bth_…
 	Scopes    []string `json:"scopes"`
 	WharfName string   `json:"wharf_name"`
+	WharfURL  string   `json:"wharf_url,omitempty"`
 	ExpiresAt int64    `json:"expires_at,omitempty"` // 0 = never
-	TargetIPs []string `json:"target_ips"`           // devices Berth may point forwards at
+	Targets   []Target `json:"targets"`              // devices Berth may point forwards at
+	TargetIPs []string `json:"target_ips"`           // the same, as addresses (filled from targets)
 }
 
 // Exchange trades the one-time code for the pairing token (server to server, pinned).
@@ -121,7 +142,24 @@ func Exchange(ctx context.Context, base, fp string, in ExchangeRequest) (Exchang
 		return out, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	return out, finish(httpClient(fp), req, &out)
+	if err := finish(httpClient(fp), req, &out); err != nil {
+		return out, err
+	}
+	for _, t := range out.Targets {
+		if t.IP != "" && !contains(out.TargetIPs, t.IP) {
+			out.TargetIPs = append(out.TargetIPs, t.IP)
+		}
+	}
+	return out, nil
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- client ----
@@ -194,6 +232,46 @@ func finish(hc *http.Client, req *http.Request, out any) error {
 
 // ---- typed calls ----
 
+// ID: Wharf numbers things with integers; Berth keeps them as strings.
+type ID string
+
+func (i *ID) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch x := v.(type) {
+	case nil:
+		*i = ""
+	case string:
+		*i = ID(x)
+	case float64:
+		*i = ID(strconv.FormatFloat(x, 'f', -1, 64))
+	default:
+		*i = ID(fmt.Sprint(x))
+	}
+	return nil
+}
+
+// items: Wharf wraps lists as {"items": [...]}; a bare list is read too.
+type items[T any] []T
+
+func (l *items[T]) UnmarshalJSON(b []byte) error {
+	var bare []T
+	if err := json.Unmarshal(b, &bare); err == nil {
+		*l = bare
+		return nil
+	}
+	var w struct {
+		Items []T `json:"items"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*l = w.Items
+	return nil
+}
+
 // Forward is a Wharf port mapping (§4.1).
 type Forward struct {
 	ID             string   `json:"id,omitempty"`
@@ -211,7 +289,7 @@ type Forward struct {
 }
 
 func (c *Client) Forwards(ctx context.Context) ([]Forward, error) {
-	var out []Forward
+	var out items[Forward]
 	return out, c.Do(ctx, "GET", "/forwards", "", nil, &out)
 }
 
@@ -251,16 +329,54 @@ func (c *Client) GetSNI(ctx context.Context) (SNI, error) {
 }
 
 type DDNS struct {
-	ID      string `json:"id"`
+	ID      ID     `json:"id"`
 	Domain  string `json:"domain"`
 	Owner   string `json:"owner"`
 	IP      string `json:"ip,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Status  string `json:"status,omitempty"` // ok | error | disabled
 	Updated int64  `json:"updated_at,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// UnmarshalJSON reads Wharf's names (last_ip, last_ok, last_err, enabled) as well.
+func (d *DDNS) UnmarshalJSON(b []byte) error {
+	var w struct {
+		ID      ID     `json:"id"`
+		Domain  string `json:"domain"`
+		Owner   string `json:"owner"`
+		IP      string `json:"ip"`
+		Status  string `json:"status"`
+		Updated int64  `json:"updated_at"`
+		LastIP  string `json:"last_ip"`
+		LastOK  int64  `json:"last_ok"`
+		LastErr string `json:"last_err"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*d = DDNS{ID: w.ID, Domain: w.Domain, Owner: w.Owner, IP: w.IP, Status: w.Status, Updated: w.Updated, Error: w.LastErr}
+	if d.IP == "" {
+		d.IP = w.LastIP
+	}
+	if d.Updated == 0 {
+		d.Updated = w.LastOK
+	}
+	if d.Status == "" {
+		switch {
+		case w.Enabled != nil && !*w.Enabled:
+			d.Status = "disabled"
+		case w.LastErr != "":
+			d.Status = "error"
+		case w.LastOK > 0:
+			d.Status = "ok"
+		}
+	}
+	return nil
 }
 
 func (c *Client) DDNS(ctx context.Context) ([]DDNS, error) {
-	var out []DDNS
+	var out items[DDNS]
 	return out, c.Do(ctx, "GET", "/ddns", "", nil, &out)
 }
 
@@ -277,7 +393,7 @@ type Device struct {
 }
 
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
-	var out []Device
+	var out items[Device]
 	return out, c.Do(ctx, "GET", "/devices", "", nil, &out)
 }
 
@@ -288,7 +404,7 @@ func (c *Client) HostView(ctx context.Context, ip, what, rng string) (json.RawMe
 }
 
 type Ban struct {
-	ID        string `json:"id,omitempty"`
+	ID        ID     `json:"id,omitempty"` // the sender's own number for this ban
 	CIDR      string `json:"cidr"`
 	Reason    string `json:"reason,omitempty"`
 	Source    string `json:"source,omitempty"`
@@ -297,10 +413,10 @@ type Ban struct {
 
 func (c *Client) PushBan(ctx context.Context, actor string, b Ban) (string, error) {
 	var out struct {
-		ID string `json:"id"`
+		ID ID `json:"id"` // Wharf answers with a number
 	}
 	err := c.Do(ctx, "POST", "/bans", actor, b, &out)
-	return out.ID, err
+	return string(out.ID), err
 }
 
 func (c *Client) WithdrawBan(ctx context.Context, actor, id string) error {

@@ -132,7 +132,7 @@ func init() {
 		// ---- people: pair with a Wharf found on the LAN ----
 		mux.HandleFunc("POST /api/v1/wharf/request", a.authed("settings.manage", a.handleWharfRequest))
 		mux.HandleFunc("GET /api/v1/wharf/request", a.authed("settings.manage", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, 200, a.wharfAskView())
+			writeJSON(w, 200, a.wharfAskView(r))
 		}))
 		mux.HandleFunc("DELETE /api/v1/wharf/request", a.authed("settings.manage", func(w http.ResponseWriter, r *http.Request) {
 			a.mu.Lock()
@@ -292,13 +292,15 @@ type wharfAsk struct {
 	Expires int64  `json:"expires_at"`
 	Error   string `json:"error,omitempty"`
 	Name    string `json:"name,omitempty"` // Wharf's name, once paired
+	errCode string
+	errP    map[string]any
 	fp      string
 	code    string
 	base    string
 	cancel  context.CancelFunc
 }
 
-func (a *App) wharfAskView() map[string]any {
+func (a *App) wharfAskView(r *http.Request) map[string]any {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	q := a.wharfAsk_
@@ -308,7 +310,11 @@ func (a *App) wharfAskView() map[string]any {
 	if q.State == "waiting" && time.Now().Unix() > q.Expires {
 		q.State = "expired"
 	}
-	return map[string]any{"state": q.State, "url": q.URL, "sas": q.SAS, "expires_at": q.Expires, "error": q.Error, "name": q.Name}
+	msg := q.Error
+	if q.errCode != "" {
+		msg = T(a.locale(r), q.errCode, q.errP) // in the reader's language, with Wharf's own words
+	}
+	return map[string]any{"state": q.State, "url": q.URL, "sas": q.SAS, "expires_at": q.Expires, "error": msg, "name": q.Name}
 }
 
 // wharfCAFP: Wharf's own CA in the chain it presents (what its pairing page shows)
@@ -386,7 +392,7 @@ func (a *App) handleWharfRequest(w http.ResponseWriter, r *http.Request) {
 	actor := currentActor(r)
 	a.pipe.Record(actor, "local", "wharf.request", map[string]any{"url": u.String()}, change.Plan{Summary: "plan.wharf.request", SummaryP: map[string]any{"url": u.String()}, Risk: change.RiskMedium})
 	go a.watchWharfAsk(pctx, q, actor)
-	writeJSON(w, 200, a.wharfAskView())
+	writeJSON(w, 200, a.wharfAskView(r))
 }
 
 // watchWharfAsk polls Wharf until its admin allows or refuses (or the request runs out); once
@@ -435,7 +441,11 @@ func (a *App) watchWharfAsk(ctx context.Context, q *wharfAsk, actor change.Actor
 			res, err := a.completeWharfPair(c, wurl, q.fp, q.base, st.Code, actor)
 			cancel()
 			if err != nil {
-				set("error", errs.From(err).Error(), "")
+				e := errs.From(err)
+				a.mu.Lock()
+				q.errCode, q.errP = e.Code, e.Params
+				a.mu.Unlock()
+				set("error", "", "")
 				return
 			}
 			set("paired", "", res.WharfName)

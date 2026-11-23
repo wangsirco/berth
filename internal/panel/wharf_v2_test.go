@@ -67,7 +67,7 @@ func TestWharfV2(t *testing.T) {
 	wf.Allow(true)
 	wait("paired", func() bool { _, a := c.do("GET", "/api/v1/wharf/request", nil); return a["state"] == "paired" })
 	l, err := c.app.wharf()
-	if err != nil || l.inbound == "" || l.inbound != wf.BerthToken {
+	if err != nil || l.inbound == "" || l.inbound != wf.BerthToken || len(l.TargetIPs) != 1 || l.TargetIPs[0] != "192.168.1.20" {
 		t.Fatalf("link: %v %+v", err, l)
 	}
 

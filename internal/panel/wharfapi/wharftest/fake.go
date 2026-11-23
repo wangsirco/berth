@@ -36,7 +36,8 @@ type Fake struct {
 	Bans       map[string]wharfapi.Ban
 	Alerts     []wharfapi.Alert
 	Actors     []string
-	Unpaired   string // keep value of the last unpair
+	Unpaired   string   // keep value of the last unpair
+	BanRefs    []string // the id Berth sent with each ban
 	// protocol v2
 	V2      bool              // answer ping with protocol 2 and take X-Berth-Key
 	KeyAuth bool              // Berth signed with a key id: call it back with X-Wharf-Key
@@ -100,16 +101,27 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if path == "/pair/exchange" && r.Method == "POST" {
-		var in wharfapi.ExchangeRequest
+		var in struct { // what the real Wharf reads (its docs/BERTH.md §3)
+			Code, Token, Name string
+		}
 		json.Unmarshal(body, &in)
 		if in.Code == "" || (in.Code != f.Code && f.Code != "*") || f.Paired {
 			fail(w, 403, "配对码无效或已用过")
 			return
 		}
 		f.Code, f.Paired = "", true
-		f.Token, f.BerthToken, f.BerthURL, f.BerthFP = "wharf_bth_"+sign.RandomHex(16), in.BerthToken, in.BerthURL, in.BerthFP
-		reply(w, 200, wharfapi.ExchangeResult{Token: f.Token, Scopes: []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso", "dns"},
-			WharfName: "Wharf · 家里", TargetIPs: []string{"192.168.1.20"}})
+		if !strings.HasPrefix(in.Token, "berth_wrf_") || len(in.Token) < 30 {
+			fail(w, 400, "Berth 需要同时交给 Wharf 一个 berth_wrf_ 开头的令牌")
+			return
+		}
+		var extra struct {
+			BerthURL string `json:"berth_url"`
+			BerthFP  string `json:"berth_fp"`
+		}
+		json.Unmarshal(body, &extra)
+		f.Token, f.BerthToken, f.BerthURL, f.BerthFP = "wharf_bth_"+sign.RandomHex(16), in.Token, extra.BerthURL, extra.BerthFP
+		reply(w, 200, map[string]any{"token": f.Token, "scopes": []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso", "dns"},
+			"wharf_name": "Wharf · 家里", "targets": []map[string]string{{"ip": "192.168.1.20", "mac": "aa:bb:cc:00:11:22", "name": "mini"}}, "expires_at": 0})
 		return
 	}
 	if path == "/pair/request" && r.Method == "POST" {
@@ -176,7 +188,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		for _, x := range f.Forwards {
 			out = append(out, x)
 		}
-		reply(w, 200, out)
+		reply(w, 200, map[string]any{"items": out})
 	case path == "/forwards" && r.Method == "POST":
 		var in wharfapi.Forward
 		json.Unmarshal(body, &in)
@@ -220,7 +232,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(body, &f.SNI)
 		reply(w, 200, f.SNI)
 	case path == "/ddns" && r.Method == "GET":
-		reply(w, 200, f.DDNSList)
+		out := []map[string]any{} // Wharf's own names
+		for i, d := range f.DDNSList {
+			out = append(out, map[string]any{"id": i + 1, "domain": d.Domain, "owner": d.Owner, "last_ip": d.IP, "last_ok": 1700000000, "enabled": true})
+		}
+		reply(w, 200, map[string]any{"items": out, "owners": map[string]string{}})
 	case path == "/ddns/claim" && r.Method == "POST":
 		var in struct{ Domain, Owner string }
 		json.Unmarshal(body, &in)
@@ -231,20 +247,26 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		d := wharfapi.DDNS{ID: id, Domain: in.Domain, Owner: in.Owner, Status: "pending"}
+		d := wharfapi.DDNS{ID: wharfapi.ID(id), Domain: in.Domain, Owner: in.Owner, Status: "pending"}
 		f.DDNSList = append(f.DDNSList, d)
 		reply(w, 200, d)
 	case path == "/devices":
-		reply(w, 200, []wharfapi.Device{{Name: "mini", IP: "192.168.1.20", MAC: "aa:bb:cc:00:11:22", Type: "server", Online: true}, {Name: "phone", IP: "192.168.1.50", Online: true}})
+		reply(w, 200, map[string]any{"items": []wharfapi.Device{{Name: "mini", IP: "192.168.1.20", MAC: "aa:bb:cc:00:11:22", Type: "server", Online: true}, {Name: "phone", IP: "192.168.1.50", Online: true}}})
 	case strings.HasPrefix(path, "/hosts/"):
 		reply(w, 200, map[string]any{"range": r.URL.Query().Get("range"), "wan_in_bytes": 123456789, "wan_out_bytes": 987654321,
 			"countries": []map[string]any{{"cc": "US", "conns": 40}, {"cc": "CN", "conns": 12}}, "scans": 3})
 	case path == "/bans" && r.Method == "POST":
 		var in wharfapi.Ban
 		json.Unmarshal(body, &in)
-		in.ID = id
-		f.Bans[id] = in
-		reply(w, 200, map[string]string{"id": id})
+		if strings.Contains(in.CIDR, ":") {
+			fail(w, 400, "暂只支持封禁 IPv4 地址")
+			return
+		}
+		f.BanRefs = append(f.BanRefs, string(in.ID)) // Berth's own number (Wharf keeps it as remote_id)
+		n := f.next
+		in.ID = wharfapi.ID(fmt.Sprint(n))
+		f.Bans[fmt.Sprint(n)] = in
+		reply(w, 200, map[string]any{"id": n}) // Wharf numbers bans
 	case strings.HasPrefix(path, "/bans/") && r.Method == "DELETE":
 		bid := strings.TrimPrefix(path, "/bans/")
 		if _, ok := f.Bans[bid]; !ok {

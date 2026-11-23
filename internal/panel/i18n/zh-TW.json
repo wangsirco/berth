@@ -1858,6 +1858,7 @@
  "wharf.bad_user": "使用者不正確",
  "wharf.ban_from_wharf": "這條封鎖來自 Wharf，不用再同步回去",
  "wharf.error": "Wharf：{detail}",
+ "wharf.ipv4_only": "Wharf 只能封鎖 IPv4 位址，這筆 IPv6 封鎖只在伺服器上生效",
  "wharf.link_broken": "對接已失效，請重新配對（{detail}）",
  "wharf.no_scope": "Wharf 沒有授予這項權限：{scope}",
  "wharf.no_target": "配對時沒有選這台伺服器作為 Wharf 的映射目標，請在 Wharf 裡重新配對或新增目標",

@@ -2,6 +2,23 @@
 
 简体中文在前，English below each version.
 
+## 1.5.1 · 2026-11-23
+
+**修复：和真实的 Wharf 路由器面板对接时的几处格式问题**
+- **在内网发现里申请绑定 Wharf**：Wharf 点「允许」后，Berth 只显示「wharf.error」，配对没有完成。原因是交换令牌时字段名和 Wharf 的不一致。手动填地址配对也受影响。现在两种方式都能完成配对。出错时也会显示翻译好的原因和 Wharf 的原话，不再显示代号。
+- **路由器视角**：设备列表、DDNS 列表和端口占用检查读不出 Wharf 的数据；「用 Wharf 的公网 IP 更新 DDNS」也取不到地址。现在都能正常显示和使用。
+- **封禁同步**：
+  - 同步到 Wharf 的封禁现在能正常记住，解封时会一起撤回；以前自动封禁还会被反复重发。
+  - 在 Wharf 里撤销一条 Berth 同步过去的封禁后，Berth 现在也会更新。
+  - IPv6 封禁不再推给 Wharf，因为 Wharf 只能封禁 IPv4 地址。
+- **其他**：Berth 建的端口映射在 Wharf 里显示站点名；Wharf 发来的紧急告警按「紧急」处理。
+
+---
+
+- Fix: pairing with a real Wharf from LAN discovery (and by address) failed after Wharf allowed it; errors now read in words.
+- Fix: the router view (devices, DDNS, port checks) and the DDNS "Wharf's public IP" source read Wharf's list format.
+- Fix: bans synced to Wharf are remembered and withdrawn, carry Berth's own number, and IPv6 bans stay on the server; Wharf's urgent alerts count as critical.
+
 ## 1.5.0 · 2026-11-23
 
 **内网发现：像连蓝牙一样绑定**

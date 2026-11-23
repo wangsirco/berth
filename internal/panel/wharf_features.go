@@ -110,14 +110,13 @@ func (a *App) syncBanWharf(ctx context.Context, banID int64, on bool, actor stri
 	if err != nil {
 		return err
 	}
+	if on && ref == "" && strings.Contains(addr, ":") {
+		return errs.New(400, "wharf.ipv4_only") // Wharf blocks IPv4 addresses only
+	}
 	if on && ref == "" {
-		b := wharfapi.Ban{CIDR: addr, Reason: reason, Source: "berth:" + firstNonEmpty(a.setting("panel.name"), "berth") + ":" + source}
+		b := wharfapi.Ban{ID: wharfapi.ID(strconv.FormatInt(banID, 10)), CIDR: addr, Reason: reason, Source: "berth:" + firstNonEmpty(a.setting("panel.name"), "berth") + ":" + source}
 		if !strings.Contains(addr, "/") {
-			if strings.Contains(addr, ":") {
-				b.CIDR += "/128"
-			} else {
-				b.CIDR += "/32"
-			}
+			b.CIDR += "/32"
 		}
 		if exp > 0 {
 			b.ExpiresAt = time.Unix(exp, 0).UTC().Format(time.RFC3339)
@@ -162,7 +161,7 @@ func (a *App) wharfBanSweep(ctx context.Context) {
 		a.syncBanWharf(ctx, id, false, "Berth · 封禁结束")
 	}
 	if a.setting("wharf.sync_auto_bans") == "1" {
-		for _, id := range ids(`SELECT id FROM bans WHERE wharf_ban = '' AND source IN ('bruteforce','waf') AND revoked_at = 0 AND (expires_at = 0 OR expires_at > ?) LIMIT 50`, now) {
+		for _, id := range ids(`SELECT id FROM bans WHERE wharf_ban = '' AND source IN ('bruteforce','waf') AND addr NOT LIKE '%:%' AND revoked_at = 0 AND (expires_at = 0 OR expires_at > ?) LIMIT 50`, now) {
 			a.syncBanWharf(ctx, id, true, "Berth · 自动封禁")
 		}
 	}
@@ -291,7 +290,7 @@ func init() {
 			if p.Mode == "forward" {
 				f, err := c.CreateForward(env.Ctx, actor, wharfapi.Forward{Name: "berth: " + s.Primary(), Proto: "tcp", WANPort: p.WANPort, TargetIP: p.TargetIP,
 					TargetPort: sitePort(s), Mode: map[bool]string{true: "restrict"}[len(p.Countries) > 0], AllowCountries: p.Countries,
-					BerthRef: "site:" + s.Primary(), BerthHost: env.Host, Note: "由 Berth 新建站点时创建"})
+					BerthRef: "site:" + s.Primary(), BerthHost: env.Host, Note: "Berth · " + s.Primary()}) // Wharf shows the note as the name
 				if err != nil {
 					return nil, nil, a.wharfErr(err)
 				}

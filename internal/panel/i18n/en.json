@@ -1858,6 +1858,7 @@
  "wharf.bad_user": "Bad user",
  "wharf.ban_from_wharf": "This ban came from Wharf",
  "wharf.error": "Wharf: {detail}",
+ "wharf.ipv4_only": "Wharf blocks IPv4 addresses only; this IPv6 ban stays on the server",
  "wharf.link_broken": "The Wharf link stopped working; pair again ({detail})",
  "wharf.no_scope": "Wharf did not grant this: {scope}",
  "wharf.no_target": "This server was not chosen as a mapping target when pairing; pair again or add it in Wharf",

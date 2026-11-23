@@ -457,6 +457,8 @@ func (a *App) wharfInAlert(w http.ResponseWriter, r *http.Request) {
 	switch in.Level {
 	case "critical", "warn", "info":
 		rule.Severity = in.Level
+	case "crit": // Wharf's word for it
+		rule.Severity = "critical"
 	}
 	a.once(rule, key, "wharf", map[string]any{"title": truncate(in.Title, 200), "body": truncate(in.Body, 1000), "link": in.Link})
 	writeJSON(w, 200, map[string]bool{"ok": true})

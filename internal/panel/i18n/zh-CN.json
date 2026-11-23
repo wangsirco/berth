@@ -1858,6 +1858,7 @@
  "wharf.bad_user": "用户不正确",
  "wharf.ban_from_wharf": "这条封禁来自 Wharf，不用再同步回去",
  "wharf.error": "Wharf：{detail}",
+ "wharf.ipv4_only": "Wharf 只能封禁 IPv4 地址，这条 IPv6 封禁只在服务器上生效",
  "wharf.link_broken": "对接已失效，请重新配对（{detail}）",
  "wharf.no_scope": "Wharf 没有授予这项权限：{scope}",
  "wharf.no_target": "配对时没有选这台服务器作为 Wharf 的映射目标，请在 Wharf 里重新配对或添加目标",

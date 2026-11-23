@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -179,6 +180,14 @@ func TestWharfLink(t *testing.T) {
 		t.Fatalf("app forwards left after undo: %d", len(wf.Forwards))
 	}
 
+	// ---- the router's view: Wharf wraps lists in {items} and names DDNS fields its own way ----
+	_, view := c.do("GET", "/api/v1/hosts/local/wharf", nil)
+	devs, _ := view["devices"].([]any)
+	dd, _ := view["ddns"].([]any)
+	if len(devs) != 2 || len(dd) != 1 || dd[0].(map[string]any)["ip"] != "198.51.100.20" || dd[0].(map[string]any)["id"] != "1" {
+		t.Fatalf("router view: devices %v ddns %v", devs, dd)
+	}
+
 	// ---- bans: Berth → Wharf, withdrawn when lifted ----
 	b := run("ban.add", map[string]any{"addr": "203.0.113.77", "minutes": 60, "reason": "SSH"})
 	bid := b["result"].(map[string]any)["id"].(float64)
@@ -191,6 +200,10 @@ func TestWharfLink(t *testing.T) {
 			t.Fatalf("%+v", x)
 		}
 	}
+	if wf.Lock(); len(wf.BanRefs) != 1 || wf.BanRefs[0] != strconv.Itoa(int(bid)) {
+		t.Fatalf("Berth's ban number not sent: %v", wf.BanRefs)
+	}
+	wf.Unlock()
 	run("ban.remove", map[string]any{"id": bid})
 	c.app.wharfBanSweep(t.Context())
 	if len(wf.Bans) != 0 {
