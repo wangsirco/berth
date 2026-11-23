@@ -169,6 +169,11 @@ func init() {
 			} else if _, ok := p.Values["access.names"]; ok && a.certRefresh != nil {
 				go a.certRefresh()
 			}
+			_, l := p.Values["panel.lan_host"]
+			_, pb := p.Values["panel.public_host"]
+			if l || pb {
+				go func() { a.entrySyncSoon(); a.notifyWharfNames() }() // the names that open the panel on 443; Wharf learns them
+			}
 			u, _ := json.Marshal(map[string]any{"values": old})
 			return nil, &change.UndoRecipe{Kind: "settings.update", Params: u}, nil
 		},

@@ -45,7 +45,9 @@ export default function Welcome() {
   const [deskStarted, setDeskStarted] = useState(false)
   const offerDesktop = !!desk && desk.status.supported && !desk.status.installed
   const steps = superUser ? ['basics', 'access', 'localname', 'security', 'adopt', ...(offerDesktop ? ['desktop'] : []), 'later'] : ['basics', 'security'] // localname: optional, what Passkey needs
-  const [step, setStep] = useState(0)
+  // back from the hop to the panel's name, the wizard goes on where it was
+  const [step, setStep] = useState(() => Math.max(0, steps.indexOf(new URLSearchParams(location.search).get('step') ?? '')))
+  const [nameOn, setNameOn] = useState(false)
   const [importing, setImporting] = useState<'1panel' | 'npm' | 'caddyfile' | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -156,7 +158,10 @@ export default function Welcome() {
               </Field>
             </>
           )}
-          {id === 'localname' && <div className="px-5"><ChangeProvider host="local"><LocalNameGuide embedded /></ChangeProvider></div>}
+          {id === 'localname' && <div className="space-y-3 px-5">
+            <div className="flex items-start gap-2 rounded-[var(--radius-box)] border border-acc bg-acc/10 px-3.5 py-2.5 text-[13px]"><span className="rounded bg-acc px-1.5 py-0.5 text-[11px] font-semibold text-white">{t('welcome.recommended')}</span><span>{t('welcome.localname_why')}</span></div>
+            <ChangeProvider host="local"><LocalNameGuide embedded wizard onSaved={setNameOn} /></ChangeProvider>
+          </div>}
           {id === 'security' && <div className="space-y-3 px-5">{user?.needs_2fa && <Notice tone="warn">{t('pub.wizard_2fa')}</Notice>}<PasskeyList onChange={() => void refresh()} /><TotpSetup onChange={() => void refresh()} /><LoginModeCard /></div>}
           {id === 'adopt' && (
             <div className="space-y-3 px-5">
@@ -215,9 +220,11 @@ export default function Welcome() {
         <div className="mt-5 flex items-center gap-2">
           {step > 0 && <Button onClick={() => setStep(step - 1)} disabled={busy}>{t('common.back')}</Button>}
           {id === 'security' && !user?.needs_2fa && <span className="text-[12px] text-mute">{t('welcome.security_optional')}</span>}
-          <Button variant="primary" className="ml-auto" onClick={() => void next()} disabled={busy || (id === 'security' && !!user?.needs_2fa)}>
-            {step === steps.length - 1 ? t('welcome.finish') : t('common.next')}
-          </Button>
+          {id === 'localname' && !nameOn
+            ? <Button variant="ghost" className="ml-auto text-mute" onClick={() => void next()} disabled={busy}>{t('welcome.skip_localname')}</Button>
+            : <Button variant="primary" className="ml-auto" onClick={() => void next()} disabled={busy || (id === 'security' && !!user?.needs_2fa)}>
+              {step === steps.length - 1 ? t('welcome.finish') : t('common.next')}
+            </Button>}
         </div>
       </AuthCard>
     </ReauthProvider>

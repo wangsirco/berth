@@ -15,7 +15,7 @@ func TestWharfV2(t *testing.T) {
 	c.withFakeAgent()
 	wf := wharftest.New()
 	defer wf.Close()
-	wf.V2 = true
+	wf.V2, wf.V3 = true, true
 	c.mkUser("root", "correct horse 9", "super")
 	c.login("root", "correct horse 9")
 	run := func(kind string, p any) map[string]any {
@@ -71,10 +71,20 @@ func TestWharfV2(t *testing.T) {
 		t.Fatalf("link: %v %+v", err, l)
 	}
 
+	// ---- paired with a Wharf that registers names: the panel becomes host.lan (once) ----
+	want := hostBase() + ".lan"
+	wait("host.lan adopted", func() bool { return c.app.setting("panel.lan_host") == want && c.app.setting("access.renamed") != "" })
+	wf.Lock()
+	_, onRouter := wf.DNS[want]
+	wf.Unlock()
+	if !onRouter || c.app.mainLAN() != want {
+		t.Fatalf("adopt: router %v main %q", wf.DNS, c.app.mainLAN())
+	}
+
 	// ---- v2: Berth learns Wharf's protocol, then names its token by key id ----
 	wait("key auth", func() bool { wf.Lock(); defer wf.Unlock(); return wf.KeyAuth })
 	_, st := c.do("GET", "/api/v1/wharf", nil)
-	if lk := st["link"].(map[string]any); lk["key_auth"] != true || lk["protocol"].(float64) != 2 {
+	if lk := st["link"].(map[string]any); lk["key_auth"] != true || lk["protocol"].(float64) < 2 {
 		t.Fatalf("status: %v", lk)
 	}
 	wf.Lock()
@@ -88,11 +98,34 @@ func TestWharfV2(t *testing.T) {
 		t.Fatal("token sent after the switch")
 	}
 	// Wharf calls back with X-Wharf-Key only
-	if code, out := wf.CallBerth(c.srv.Client(), c.srv.URL, "GET", "/ping", nil); code != 200 || out["protocol"].(float64) != 2 {
+	if code, out := wf.CallBerth(c.srv.Client(), c.srv.URL, "GET", "/ping", nil); code != 200 || out["protocol"].(float64) < 2 {
 		t.Fatalf("ping: %d %v", code, out)
 	}
 	if l, _ := c.app.wharf(); !l.WharfKeyAuth {
 		t.Fatal("wharf_key_auth not recorded")
+	}
+
+	// ---- statistics (protocol 3, scope stats): read-only, only the listed ones ----
+	if r, st := c.do("GET", "/api/v1/wharf/stats/summary", nil); r.StatusCode != 200 || st["devices"].(map[string]any)["online"].(float64) != 23 {
+		t.Fatalf("summary: %d %v", r.StatusCode, st)
+	}
+	if r, st := c.do("GET", "/api/v1/wharf/stats/traffic?from=1&to=2", nil); r.StatusCode != 200 || len(st["series"].([]any)) != 24 {
+		t.Fatalf("traffic: %d", r.StatusCode)
+	}
+	if r, _ := c.do("GET", "/api/v1/wharf/stats/devices/aa:bb:cc:00:11:22/traffic", nil); r.StatusCode != 200 {
+		t.Fatalf("device traffic: %d", r.StatusCode)
+	}
+	if r, out := c.do("GET", "/api/v1/wharf/stats/dns", nil); r.StatusCode != 404 || out["error"].(map[string]any)["code"] != "wharf.stats_no_dns" {
+		t.Fatalf("dns without NextDNS: %d %v", r.StatusCode, out)
+	}
+	if r, _ := c.do("GET", "/api/v1/wharf/stats/../forwards", nil); r.StatusCode == 200 {
+		t.Fatal("a path outside the statistics")
+	}
+	if r, _ := c.do("GET", "/api/v1/wharf/stats/users", nil); r.StatusCode != 404 {
+		t.Fatal("an unlisted statistic")
+	}
+	if l, _ := c.app.wharf(); l.PeerPublic != "https://wharf.example.net" {
+		t.Fatalf("Wharf's names: %q %q", l.PeerLAN, l.PeerPublic)
 	}
 
 	// ---- rotate: new tokens both ways ----
@@ -137,6 +170,24 @@ func TestWharfV2(t *testing.T) {
 	wf.Unlock()
 	if n != 0 {
 		t.Fatalf("clear: %v", wf.DNS)
+	}
+
+	// ---- LAN or internet: found on the LAN it is a LAN link; switching needs a public name ----
+	if l, _ := c.app.wharf(); l.Mode != "lan" || l.PeerLAN == "" {
+		t.Fatalf("mode after LAN discovery: %q %q", l.Mode, l.PeerLAN)
+	}
+	if r, out := c.do("POST", "/api/v1/wharf/mode", map[string]string{"mode": "public", "url": wf.URL}); r.StatusCode != 409 {
+		t.Fatalf("switched without a public name: %d %v", r.StatusCode, out)
+	}
+	c.app.setSetting("panel.public_host", "panel.example.com")
+	if r, out := c.do("POST", "/api/v1/wharf/mode", map[string]string{"mode": "public", "url": wf.URL}); r.StatusCode != 200 {
+		t.Fatalf("switch: %d %v", r.StatusCode, out)
+	}
+	if l, _ := c.app.wharf(); l.Mode != "public" || l.PeerPublic != wf.URL || l.PeerLAN == "" {
+		t.Fatalf("after switch: %+v", l)
+	}
+	if r, _ := c.do("POST", "/api/v1/wharf/mode", map[string]string{"mode": "lan", "url": "https://127.0.0.1:1"}); r.StatusCode != 400 {
+		t.Fatal("switched to an address that is not this Wharf")
 	}
 
 	// ---- unpair: POST /unpair on Wharf ----

@@ -694,7 +694,7 @@ function ZoneStats({ integ, zone, onClose }: { integ: string; zone: CFZone; onCl
   )
 }
 
-interface WharfLinkInfo { url: string; name: string; fp: string; scopes: string[]; target_ips: string[]; alerts_primary: string; paired_at: number; last_seen?: number; state: string; protocol?: number; key_auth?: boolean; wharf_key_auth?: boolean; dns_name?: string }
+interface WharfLinkInfo { url: string; name: string; fp: string; scopes: string[]; target_ips: string[]; alerts_primary: string; paired_at: number; last_seen?: number; state: string; mode?: string; peer_lan?: string; peer_public?: string; protocol?: number; key_auth?: boolean; wharf_key_auth?: boolean; dns_name?: string }
 export interface WharfStatus { paired: boolean; berth_fp: string; link?: WharfLinkInfo; live?: LinkLive; user_map?: { wharf_user: string; berth_user: string }[] }
 interface WharfView {
   paired: boolean
@@ -711,6 +711,9 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
   const { user } = useAuth()
   // a Wharf found by LAN discovery comes in as ?url=…: filled in and checked at once
   const [u, setU] = useState(() => new URLSearchParams(location.search).get('url') ?? '')
+  // LAN or internet: which pair of names the link uses (found by LAN discovery: the LAN)
+  const [mode, setMode] = useState<'lan' | 'public'>(() => new URLSearchParams(location.search).get('mode') === 'public' ? 'public' : 'lan')
+  const where = useApi<{ public_name: string; lan_name: string }>('/api/v1/access/where')
   const [chain, setChain] = useState<{ subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] | null>(null)
   const [fp, setFp] = useState('')
   const [err, setErr] = useState('')
@@ -725,14 +728,20 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
     } catch (e) { setErr(errText(e)) }
   }
   const go = async () => {
-    try { const r = await post<{ redirect: string }>('/api/v1/wharf/pair/start', { url: full, fp }); location.href = r.redirect } catch (e) { setErr(errText(e)) }
+    try { const r = await post<{ redirect: string }>('/api/v1/wharf/pair/start', { url: full, fp, mode }); location.href = r.redirect } catch (e) { setErr(errText(e)) }
   }
   if (user?.role !== 'super') return <Notice>{t('wharf.super_only')}</Notice>
   const body = (
       <div className={bare ? 'space-y-3 text-[13px]' : 'space-y-3 px-4 py-3 text-[13px]'}>
         {!bare && <p className="text-mute">{t('wharf.pair_how')}</p>}
         {err && <Notice tone="bad">{err}</Notice>}
-        <div className="flex gap-2"><Input className="num flex-1" value={u} onChange={(e) => setU(e.target.value.trim())} placeholder="https://192.168.1.1:8443" /><Button disabled={!u} onClick={probe}>{t('wharf.check_cert')}</Button></div>
+        <div className="space-y-1.5" data-link-mode={mode}>
+          <div className="font-semibold">{t('linkmode.ask')}</div>
+          <Segmented value={mode} onChange={(m) => { setMode(m); setChain(null) }} options={[{ value: 'lan', label: t('linkmode.lan') }, { value: 'public', label: t('linkmode.public') }]} />
+          <p className="text-[12px] text-mute">{t(mode === 'lan' ? 'linkmode.lan_d' : 'linkmode.public_d', { lan: where.data?.lan_name || 'mini.lan', pub: where.data?.public_name || '—' })}</p>
+          {mode === 'public' && where.data && !where.data.public_name && <Notice tone="warn">{t('wharf.no_public_name')}</Notice>}
+        </div>
+        <div className="flex gap-2"><Input className="num flex-1" value={u} onChange={(e) => setU(e.target.value.trim())} placeholder={mode === 'lan' ? 'https://wharf.lan:7080' : 'https://wharf.example.com'} /><Button disabled={!u} onClick={probe}>{t('wharf.check_cert')}</Button></div>
         {chain && <>
           {chain[0]?.public
             ? <>

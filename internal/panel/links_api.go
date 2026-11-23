@@ -101,7 +101,7 @@ func (a *App) handleLinks(w http.ResponseWriter, r *http.Request) {
 	if !until.After(time.Now()) {
 		until = time.Time{}
 	}
-	writeJSON(w, 200, map[string]any{"items": out, "name": a.panelDisplayName(), "fp": a.caFP(), "addrs": a.ourAddrs(r),
+	writeJSON(w, 200, map[string]any{"items": out, "name": a.panelDisplayName(), "fp": a.caFP(), "addrs": a.ourAddrs(r), "addrs_lan": nonNilS(a.berthAddrsFor("lan", "", panelBase(r))), "addrs_public": nonNilS(a.berthAddrsFor("public", "")),
 		"discoverable_until": until.Unix(), "requests": reqs})
 }
 
@@ -110,8 +110,10 @@ func (a *App) handleLinks(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLinkCode(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Addrs []string `json:"addrs"` // where the peer should reach this panel, in order (default: what this panel knows)
+		Mode  string   `json:"mode"`  // lan | public
 	}
 	readJSON(r, &in)
+	mode := linkMode(in.Mode)
 	addrs := []string{}
 	for _, x := range in.Addrs {
 		if u, err := url.Parse(strings.TrimRight(strings.TrimSpace(x), "/")); err == nil && u.Scheme == "https" && u.Host != "" && !contains(addrs, u.String()) && len(addrs) < 6 {
@@ -119,7 +121,11 @@ func (a *App) handleLinkCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(addrs) == 0 {
-		addrs = a.ourAddrs(r)
+		addrs = a.berthAddrsFor(mode, "", panelBase(r))
+	}
+	if len(addrs) == 0 {
+		a.fail(w, r, errs.New(409, "wharf.no_public_name"))
+		return
 	}
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -137,7 +143,8 @@ func (a *App) handleLinkCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	code := encodeLinkCode(linkCode{V: 1, Addrs: addrs, FP: a.caFP(), S: secret, Name: a.panelDisplayName(), Pub: base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes())})
+	a.db.Exec(`UPDATE panel_links SET mode=? WHERE id=?`, mode, id)
+	code := encodeLinkCode(linkCode{V: 1, Addrs: addrs, FP: a.caFP(), S: secret, Name: a.panelDisplayName(), Pub: base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes()), Mode: mode})
 	_, _ = a.pipe.Record(currentActor(r), "local", "link.code", map[string]any{"id": id}, change.Plan{Summary: "plan.link.code", Risk: change.RiskMedium})
 	writeJSON(w, 200, map[string]any{"id": id, "code": code, "expires_at": exp})
 }
@@ -259,7 +266,7 @@ func (a *App) handleLinkAccept(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(addrs) == 0 {
-		addrs = a.ourAddrs(r)
+		addrs = a.berthAddrsFor(linkMode(c.Mode), "", panelBase(r)) // the same kind of names as the main panel's
 	}
 	mainPub, _ := base64.StdEncoding.DecodeString(c.Pub)
 	myPub := ins.priv.PublicKey().Bytes()
@@ -278,6 +285,9 @@ func (a *App) handleLinkAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	if c.Mode != "" {
+		a.db.Exec(`UPDATE panel_links SET mode=? WHERE id=?`, linkMode(c.Mode), id)
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	err = linkPlain(ctx, ins.base, c.FP, "/link-api/offer", map[string]any{"s": c.S, "uid": uid, "pub": base64.StdEncoding.EncodeToString(myPub),

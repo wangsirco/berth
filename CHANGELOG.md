@@ -2,6 +2,68 @@
 
 简体中文在前，English below each version.
 
+## 1.6.0 · 2026-11-23
+
+**一个面板，一个名字，不用记 IP 和端口**
+- 面板直接用名字打开，不带端口：例如 `https://mini.local`；和路由器的 Wharf 配对后，换成 `https://mini.lan`。
+  - 网站入口（443 端口）按名字把面板的名字转给面板，其他名字照旧给网站。
+  - 证书用面板自己的本地证书，设备信任一次就好。
+  - 原来的「IP + 端口」保留作后备地址。
+- **只认一个名字**：用 IP 或别的名字打开时，只要这台设备打得开面板的名字，就会自动换过去，并带着安全入口和登录状态。这样从哪里进来都落在同一个名字上，Passkey（指纹 / 面容登录）就一直能用。
+  - 这台设备暂时打不开时，页面顶部会说明，并给出「让这台设备能用」的步骤。
+- **配对了能登记名字的 Wharf**：面板会自动改用 `主机名.lan`，家里所有设备都能找到它，包括不支持 `.local` 的设备。
+  - 改名后页面顶部会提醒：Passkey 跟着名字走，需要在新名字上再添加一次。
+- **安装向导**：「内网域名」一步标为「推荐」，跳过按钮改成次要样式。
+- **设置 → 访问地址**：一张卡片列出内网地址、公网地址和后备地址，并标明这台设备能不能打开。
+
+**内网互联 / 公网互联：二选一，分得清清楚楚**
+- 和 Wharf 配对、生成面板之间的配对码时，先回答「两台在同一个局域网吗？」：
+  - **内网互联**：两边用内网名字；
+  - **公网互联**：两边用公网名字。
+  - 选定后，这条连接只用这一对名字，连不上也不会悄悄换成另一种。
+- 用 IP 配对的 Wharf，如果 `wharf.lan` 就是同一台路由器，会改成用名字记住。
+- Wharf 页顶部同时显示对方的内网名字和公网名字，可以「改为公网互联 / 改为内网互联」，不用重新配对。
+- **打开 Wharf 时判断你在家还是在外**：
+  - 用内网打开的 Berth，打开 Wharf 的内网名字；
+  - 用公网打开的 Berth，先试一下内网通不通；
+  - 没把握时，让你选「打开内网」还是「打开公网」，可以记住这台设备的选择。
+  - 都是免登录跳过去，从 Wharf 打开 Berth 也一样。
+
+**Berth 里的 Wharf 页：图形化，直接看路由器的统计**（需要 Wharf 0.25，配对时勾选「查看统计」）
+- **总览**：
+  - 四个数字：在线设备、今日流量、外网访客、拦截；
+  - 24 小时外网流量图；
+  - 流量最多的设备、访客来自哪些国家；
+  - 这台服务器在路由器上的分流、映射和封禁。
+- 另外几个标签页：
+  - **流量**：下载 / 上传曲线，按设备、按服务排行；
+  - **流向世界**：家里在和哪些国家通信；
+  - **设备**：在家 / 离开，点开看这台设备的流量；
+  - **访问记录**：可以一键在服务器上封禁；
+  - **DNS**：请求、拦截和拦截最多的域名；
+  - **联动设置**：原来的设置收进这里。
+- 每个数字、每一行都能点进去；每块都有「在 Wharf 中打开」，会落在 Wharf 同一页、同样的筛选上。
+
+**修复**
+- 网站入口：上传的证书以前会被用到所有网站上，现在只给它自己的网站。
+- 从 Wharf 免登录进入 Berth 时，设了安全入口的面板会显示 404。
+- Wharf 回复「对接过期」「签名过期」时，不会再退回带令牌的旧签名。
+
+---
+
+- **One name per panel, no port**:
+  - `https://mini.local` (or `https://mini.lan` once paired with Wharf) opens the panel through the site entry on 443, on the panel's own certificate.
+  - Any other address moves to that name, keeping the entry and the sign-in, so Passkeys keep working.
+  - Settings → Where the panel opens shows the LAN, public and fallback addresses; the setup wizard recommends the local name.
+- **LAN or internet links**:
+  - Pairing with Wharf or another panel asks which; the link uses that pair of names only and can be switched without pairing again.
+  - Opening the other side checks whether you are at home and asks when unsure.
+- **Wharf page with charts** (Wharf 0.25, scope Statistics): overview tiles, 24 h traffic, busiest devices, visitor countries, traffic, world, devices, access log, DNS. Everything clicks through, and each panel opens the same page in Wharf.
+- Fixes:
+  - an uploaded certificate was served for every site;
+  - the Wharf sign-in link failed behind a security entry;
+  - Berth no longer falls back to sending the token on expired-link errors.
+
 ## 1.5.1 · 2026-11-23
 
 **修复：和真实的 Wharf 路由器面板对接时的几处格式问题**

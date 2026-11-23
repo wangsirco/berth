@@ -308,4 +308,9 @@ var migrations = []string{
 	 ALTER TABLE wharf_link ADD COLUMN protocol INTEGER NOT NULL DEFAULT 0;
 	 ALTER TABLE wharf_link ADD COLUMN wharf_key_auth INTEGER NOT NULL DEFAULT 0;
 	 ALTER TABLE wharf_link ADD COLUMN dns_name TEXT NOT NULL DEFAULT ''`,
+	// v51: 内网互联 / 公网互联二选一；对方的内网名字和公网名字（两边都显示，切换时用）
+	`ALTER TABLE wharf_link ADD COLUMN mode TEXT NOT NULL DEFAULT 'lan';
+	 ALTER TABLE wharf_link ADD COLUMN peer_lan TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE wharf_link ADD COLUMN peer_public TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE panel_links ADD COLUMN mode TEXT NOT NULL DEFAULT ''`,
 }

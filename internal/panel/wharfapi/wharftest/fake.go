@@ -40,6 +40,7 @@ type Fake struct {
 	BanRefs    []string // the id Berth sent with each ban
 	// protocol v2
 	V2      bool              // answer ping with protocol 2 and take X-Berth-Key
+	V3      bool              // protocol 3: names, statistics (scope stats)
 	KeyAuth bool              // Berth signed with a key id: call it back with X-Wharf-Key
 	Bearers int               // requests that still carried the token
 	Open    bool              // LAN requests accepted
@@ -120,7 +121,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		json.Unmarshal(body, &extra)
 		f.Token, f.BerthToken, f.BerthURL, f.BerthFP = "wharf_bth_"+sign.RandomHex(16), in.Token, extra.BerthURL, extra.BerthFP
-		reply(w, 200, map[string]any{"token": f.Token, "scopes": []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso", "dns"},
+		reply(w, 200, map[string]any{"token": f.Token, "scopes": []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso", "dns", "stats"},
 			"wharf_name": "Wharf · 家里", "targets": []map[string]string{{"ip": "192.168.1.20", "mac": "aa:bb:cc:00:11:22", "name": "mini"}}, "expires_at": 0})
 		return
 	}
@@ -301,7 +302,14 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		if f.V2 {
 			p["protocol"], p["key_auth"] = 2, f.KeyAuth
 		}
+		if f.V3 {
+			p["protocol"] = 3
+		}
 		reply(w, 200, p)
+	case path == "/names" && f.V3:
+		reply(w, 200, map[string]string{"lan": f.URL, "public": "https://wharf.example.net", "lan_fp": f.FP})
+	case strings.HasPrefix(path, "/stats/") && f.V3:
+		f.stats(w, strings.TrimPrefix(path, "/stats/"))
 	case path == "/dns/names" && r.Method == "GET":
 		items := []map[string]string{}
 		for n, ip := range f.DNS {
@@ -366,4 +374,39 @@ func (f *Fake) CallBerth(hc *http.Client, base, method, path string, in any) (in
 	out := map[string]any{}
 	json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
+}
+
+// stats answers the read-only statistics (shapes as Wharf's own pages use them)
+func (f *Fake) stats(w http.ResponseWriter, what string) {
+	now := time.Now().Unix() / 3600 * 3600
+	series := []map[string]any{}
+	for i := 23; i >= 0; i-- {
+		series = append(series, map[string]any{"t": now - int64(i)*3600, "down": 1_000_000_000 + i*50_000_000, "up": 90_000_000 + i*3_000_000})
+	}
+	devs := []map[string]any{{"mac": "aa:bb:cc:00:11:22", "name": "mini", "ip": "192.168.1.20", "type": "server", "down": 14_000_000_000, "up": 900_000_000, "last_seen": now},
+		{"mac": "aa:bb:cc:00:11:33", "name": "iPhone", "ip": "192.168.1.50", "type": "phone", "down": 8_200_000_000, "up": 300_000_000, "last_seen": now}}
+	switch {
+	case what == "summary":
+		reply(w, 200, map[string]any{"devices": map[string]int{"online": 23, "total": 41}, "today": map[string]int64{"down": 37_580_000_000, "up": 3_300_000_000},
+			"visitors_24h": map[string]int{"count": 1284, "countries": 37}, "blocked_24h": map[string]int{"attacks": 41, "dns": 271},
+			"series_24h": series, "top_devices": devs, "top_countries": []map[string]any{{"cc": "US", "count": 412}, {"cc": "NZ", "count": 260}},
+			"pages": map[string]string{"traffic": "/traffic", "visitors": "/visitors", "world": "/world", "devices": "/devices", "device": "/devices/{mac}", "dns": "/dns"}})
+	case what == "traffic":
+		reply(w, 200, map[string]any{"up": 3_300_000_000, "down": 37_580_000_000, "step": 3600, "series": series, "devices": devs,
+			"services": []map[string]any{{"name": "YouTube", "category": "video", "bytes": 9_000_000_000, "up": 1, "down": 9_000_000_000, "requests": 10, "conns": 4}}, "categories": nil})
+	case what == "geo":
+		reply(w, 200, map[string]any{"origin": map[string]any{"name": "Auckland"}, "countries": []map[string]any{{"code": "US", "name": "美国", "lat": 38, "lon": -97, "bytes": 5_000_000_000, "conns": 120}, {"code": "JP", "name": "日本", "lat": 36, "lon": 138, "bytes": 1_000_000_000, "conns": 40}}, "cities": nil})
+	case what == "visitors":
+		reply(w, 200, map[string]any{"items": []map[string]any{{"id": 1, "ts": now, "ip": "203.0.113.9", "country": "US", "city": "Dallas", "username": "", "path": "/login", "blocked": true, "reason": "国家不在允许列表", "tz_match": "unknown"}}, "geo_ready": true})
+	case what == "devices":
+		reply(w, 200, []map[string]any{{"mac": "aa:bb:cc:00:11:22", "ip": "192.168.1.20", "name": "mini", "type": "server", "online": true, "presence": "home"}, {"mac": "aa:bb:cc:00:11:33", "ip": "192.168.1.50", "name": "iPhone", "type": "phone", "online": false, "presence": "away"}})
+	case strings.HasSuffix(what, "/traffic"):
+		reply(w, 200, map[string]any{"from": now - 86400, "to": now, "step": 3600, "series": series, "up": 1, "down": 2, "heatmap": nil, "by_hour": nil, "peak_hour": 20, "services": nil, "categories": nil})
+	case strings.HasSuffix(what, "/presence"):
+		reply(w, 200, map[string]any{"state": "home", "online": true, "events": []any{}, "away_minutes": 0})
+	case what == "dns":
+		fail(w, 404, "没有配置 NextDNS")
+	default:
+		fail(w, 404, "没有这个接口")
+	}
 }

@@ -4,7 +4,7 @@ import { ArrowRight, BellRing, Check, Copy, Globe, House, Link2, Radar, Server, 
 import { Box, Dot, Empty, Notice, Pill } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
-import { Field, Input, Textarea } from '@/components/ui/Field'
+import { Field, Input, Segmented, Textarea } from '@/components/ui/Field'
 import { cx } from '@/components/ui/cx'
 import { del, errText, post } from '@/lib/api'
 import { datetime } from '@/lib/format'
@@ -27,10 +27,10 @@ export interface Live {
 }
 interface LinkItem {
   id: number; role: 'main' | 'managed'; status: 'code' | 'confirm' | 'wait' | 'active'; name: string; slug: string; addrs: string[]; fp: string; sas?: string
-  hosts: string[]; by: string; created_at: number; expires_at?: number; confirmed_at?: number; last_addr?: string; live: Live
+  hosts: string[]; by: string; created_at: number; expires_at?: number; confirmed_at?: number; last_addr?: string; live: Live; mode?: '' | 'lan' | 'public'
 }
 interface LinkRequest { id: string; from: string; ip: string; at: number; code: string }
-interface Data { items: LinkItem[]; name: string; fp: string; addrs: string[]; discoverable_until: number; requests: LinkRequest[] }
+interface Data { items: LinkItem[]; name: string; fp: string; addrs: string[]; addrs_lan?: string[]; addrs_public?: string[]; discoverable_until: number; requests: LinkRequest[] }
 
 export default function LinksPage() {
   return <ReauthProvider><Links /></ReauthProvider>
@@ -159,6 +159,7 @@ function LinkCard({ l, onChange }: { l: LinkItem; onChange: () => void }) {
         <Dot state={l.status !== 'active' ? 'warn' : live?.online ? 'ok' : 'off'} />
         <span className="text-[14px] font-semibold">{l.name || '—'}</span>
         <Pill>{t(l.role === 'main' ? 'links.role_main' : 'links.role_managed')}</Pill>
+        {l.mode && <span className="rounded-full bg-acc/15 px-2 py-0.5 text-[11.5px] text-acc" data-link-mode={l.mode}>{t(l.mode === 'public' ? 'linkmode.tag_public' : 'linkmode.tag_lan')}</span>}
         {l.status !== 'active' && <Pill tone="warn">{t('links.st_' + l.status)}</Pill>}
         {l.status === 'active' && <ConnBadge live={live} />}
         <span className="ml-auto flex gap-1">
@@ -200,8 +201,10 @@ function MakeDialog({ data, onClose }: { data: Data; onClose: () => void }) {
   const [peer, setPeer] = useState('')
   const [copied, setCopied] = useState('')
   const [pending, setPending] = useState<LinkItem | null>(null)
-  const [ours, setOurs] = useState(data.addrs.join('\n'))
-  const make = () => { setErr(''); post<{ id: number; code: string; expires_at: number }>('/api/v1/links/code', { addrs: ours.split(/\s+/).filter(Boolean) }).then(setCode).catch((e) => setErr(errText(e))) }
+  const [mode, setMode] = useState<'lan' | 'public'>('lan')
+  const addrsFor = (m: 'lan' | 'public') => (m === 'lan' ? data.addrs_lan : data.addrs_public) ?? data.addrs
+  const [ours, setOurs] = useState(addrsFor('lan').join('\n'))
+  const make = () => { setErr(''); post<{ id: number; code: string; expires_at: number }>('/api/v1/links/code', { addrs: ours.split(/\s+/).filter(Boolean), mode }).then(setCode).catch((e) => setErr(errText(e))) }
   // the other panel accepted: this one shows the confirmation right here
   const d = useApi<Data>('/api/v1/links', [])
   useEvents(['link.pending'], () => void d.reload())
@@ -227,6 +230,11 @@ function MakeDialog({ data, onClose }: { data: Data; onClose: () => void }) {
           : <>
             <p className="text-mute">{t('links.make_d')}</p>
             {!code && <>
+              <div className="space-y-1.5" data-link-mode={mode}>
+                <div className="font-semibold">{t('linkmode.ask')}</div>
+                <Segmented value={mode} onChange={(m) => { setMode(m); setOurs(addrsFor(m).join('\n')) }} options={[{ value: 'lan', label: t('linkmode.lan') }, { value: 'public', label: t('linkmode.public') }]} />
+                {mode === 'public' && !(data.addrs_public?.length) && <Notice tone="warn">{t('wharf.no_public_name')}</Notice>}
+              </div>
               <Field label={t('links.our_addrs_for_peer')} hint={t('links.our_addrs_for_peer_hint')}>
                 <Textarea rows={3} className="num text-[12px]" value={ours} onChange={(e) => setOurs(e.target.value)} data-our-addrs />
               </Field>

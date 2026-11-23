@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Copy, Download, ExternalLink, Laptop, Smartphone } from 'lucide-react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Notice } from '@/components/ui/Box'
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { Field, Input, Segmented } from '@/components/ui/Field'
 import { cx } from '@/components/ui/cx'
+import { get } from '@/lib/api'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 
@@ -16,6 +17,7 @@ import { useT } from '@/lib/i18n'
 interface Status {
   hostname: string; suggested: string; current: string; port: string; ip: string; url?: string; opened_as: string; wharf_paired: boolean; entry?: string
   wharf_dns?: { suffixes: string[]; registered: string }
+  no_port?: string[]
   mdns: { installed: boolean; active: boolean; hostname: string; aliases: string[]; firewall_open: boolean }
 }
 
@@ -30,7 +32,7 @@ const detectOS = (): OS => {
 }
 const NAME_RE = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+(local|lan|home\.arpa|internal)$/
 
-export function LocalNameGuide({ embedded }: { embedded?: boolean }) {
+export function LocalNameGuide({ embedded, wizard, onSaved }: { embedded?: boolean; wizard?: boolean; onSaved?: (on: boolean) => void }) {
   const t = useT()
   const run = useChange()
   const st = useApi<Status>('/api/v1/local-name', [])
@@ -46,8 +48,16 @@ export function LocalNameGuide({ embedded }: { embedded?: boolean }) {
   const isLocal = name.endsWith('.local')
   const routerAuto = !!s?.wharf_dns && s.wharf_dns.suffixes.some((x) => name.endsWith('.' + x.replace(/^\./, '')))
   const saved = !!s && s.current === name && (routerAuto ? s.wharf_dns!.registered === name : true) && (!isLocal || (s.mdns.active && (name === s.mdns.hostname + '.local' || s.mdns.aliases.includes(name))))
-  const url = s ? `https://${name}${s.port && s.port !== '443' ? ':' + s.port : ''}` : ''
+  const url = s ? `https://${name}${s.port && s.port !== '443' && !s.no_port?.includes(name) ? ':' + s.port : ''}` : ''
   const onName = !!s && s.opened_as === name
+  useEffect(() => { onSaved?.(saved) }, [saved])
+  // with a Wharf that registers names, host.lan is what every device finds: start there
+  useEffect(() => { if (s?.wharf_dns?.suffixes.includes('lan') && !s.current) setMode('lan') }, [!!s?.wharf_dns])
+  // over to the name with a one-time link: the entry and the sign-in come along
+  const goThere = async () => {
+    const h = await get<{ url: string }>('/api/v1/access/hop?to=lan&path=' + encodeURIComponent(wizard ? '/welcome?step=localname' : location.pathname)).catch(() => null)
+    location.href = h?.url ?? url + (s?.entry || '/login')
+  }
   const apply = () => run('panel.local_name', { name }, { onDone: () => void st.reload() })
   const test = async () => {
     setCheck('checking')
@@ -107,7 +117,7 @@ export function LocalNameGuide({ embedded }: { embedded?: boolean }) {
         <div className="flex items-center gap-2 font-semibold">{num(3, check === 'ok')}{t('lname.s4')}</div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" disabled={!saved || check === 'checking'} onClick={() => void test()}>{t(check === 'checking' ? 'lname.checking' : 'lname.check', { url })}</Button>
-          {check === 'ok' && !onName && <a href={url + (s.entry || '/login')} target="_self"><Button size="sm" variant="primary"><ExternalLink className="size-3.5" />{t('lname.open_there')}</Button></a>}
+          {check === 'ok' && !onName && <Button size="sm" variant="primary" onClick={() => void goThere()}><ExternalLink className="size-3.5" />{t('lname.open_there')}</Button>}
         </div>
         {check === 'ok' && <Notice tone="acc">{t(onName ? 'lname.ok_here' : 'lname.ok', { name })}</Notice>}
         {check === 'bad' && <Notice tone="warn">{t('lname.bad', { name })}</Notice>}

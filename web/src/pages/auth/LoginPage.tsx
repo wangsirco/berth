@@ -10,6 +10,7 @@ import { useT } from '@/lib/i18n'
 import { onIPAddress, PasskeyCancelled, passkeyLogin, passkeySupported } from '@/lib/passkey'
 import type { User } from '@/lib/types'
 import { AuthCard } from './AuthCard'
+import { GoToMainName } from '@/components/access/MainName'
 
 type Login = { stage: 'full' | 'second_step'; csrf: string; user?: User; methods?: string[] }
 
@@ -82,6 +83,7 @@ export default function LoginPage() {
   }
   return (
     <AuthCard title={t('login.title')} sub={needsSetup ? t('login.needs_setup') : undefined}>
+      <GoToMainName />
       <form onSubmit={submit} className="space-y-3">
         {err && <Notice tone="bad">{err}</Notice>}
         <div><Label htmlFor="u">{t('login.username')}</Label><Input id="u" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username webauthn" autoFocus /></div>

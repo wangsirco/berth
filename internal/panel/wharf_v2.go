@@ -24,7 +24,7 @@ import (
 	"github.com/wangsirco/berth/internal/version"
 )
 
-const wharfProtocol = 2
+const wharfProtocol = 3 // 3: names, LAN / internet links, stats
 
 var wharfPinged = struct {
 	sync.Mutex
@@ -50,7 +50,9 @@ func (a *App) wharfRefresh(ctx context.Context, force bool) {
 	p, err := l.api().Ping(ctx)
 	if err != nil {
 		var we *wharfapi.Error
-		if l.KeyAuth && errorsAs(err, &we) && we.Status == 401 {
+		// only when Wharf no longer knows key ids ("缺少对接令牌"): an expired link, an old
+		// signature or a replay are 401 too, and must never send the token itself
+		if l.KeyAuth && errorsAs(err, &we) && we.Status == 401 && strings.Contains(we.Message, "缺少对接令牌") {
 			// a Wharf that took key ids yesterday and not today (downgraded): back to v1
 			a.db.Exec(`UPDATE wharf_link SET protocol=0 WHERE id=1`)
 		}
@@ -58,7 +60,9 @@ func (a *App) wharfRefresh(ctx context.Context, force bool) {
 	}
 	if p.Protocol != l.Protocol {
 		a.db.Exec(`UPDATE wharf_link SET protocol=? WHERE id=1`, p.Protocol)
+		l.Protocol = p.Protocol
 	}
+	a.wharfNames(ctx, l) // its LAN and public names (protocol 3)
 	if p.Protocol >= 2 && !l.KeyAuth && l.inbound != "" {
 		// the first signed call with a key id switches Wharf over: do it now, not at the next ban
 		if l, err := a.wharf(); err == nil {
@@ -165,7 +169,19 @@ func (a *App) wharfInEvent(w http.ResponseWriter, r *http.Request) {
 		a.db.Exec(`UPDATE bans SET wharf_ban='', layers=(SELECT json_group_array(value) FROM json_each(layers) WHERE value != 'wharf')
 			WHERE wharf_ban != '' AND (CAST(id AS TEXT)=? OR wharf_ban=?)`, id, "out:"+id)
 		a.hub.publish(event{Type: "ban", Data: map[string]any{"host": "local"}})
-	case "link.updated": // Wharf narrowed the scopes or changed the hosts
+	case "names.changed":
+		if l, err := a.wharf(); err == nil {
+			l.Protocol = max(l.Protocol, 3)
+			a.wharfNames(r.Context(), l)
+		}
+	case "link.updated": // Wharf narrowed the scopes or changed the hosts (or its names)
+		if n, ok := ev["names"].(map[string]any); ok {
+			lan, _ := n["lan"].(string)
+			pub, _ := n["public"].(string)
+			if l, err := a.wharf(); err == nil {
+				a.applyWharfNames(r.Context(), l, strings.TrimRight(lan, "/"), strings.TrimRight(pub, "/"))
+			}
+		}
 		if sc, ok := ev["scopes"].([]any); ok {
 			b, _ := json.Marshal(sc)
 			a.db.Exec(`UPDATE wharf_link SET scopes=? WHERE id=1`, string(b))
@@ -184,6 +200,24 @@ func (a *App) wharfInEvent(w http.ResponseWriter, r *http.Request) {
 			}
 			b, _ := json.Marshal(ips)
 			a.db.Exec(`UPDATE wharf_link SET target_ips=? WHERE id=1`, string(b))
+		}
+	case "link.mode": // switched on Wharf's side: use Wharf's names of that kind
+		mode := linkMode(str("mode"))
+		if l, err := a.wharf(); err == nil {
+			target := l.PeerLAN
+			if mode == "public" {
+				target = l.PeerPublic
+			}
+			if urls, ok := ev["wharf_urls"].([]any); ok && len(urls) > 0 {
+				if u, _ := urls[0].(string); strings.HasPrefix(u, "https://") {
+					target = strings.TrimRight(u, "/")
+				}
+			}
+			if target != "" {
+				a.db.Exec(`UPDATE wharf_link SET mode=?, url=? WHERE id=1`, mode, target)
+			} else {
+				a.db.Exec(`UPDATE wharf_link SET mode=? WHERE id=1`, mode)
+			}
 		}
 	case "forward.changed", "ddns.owner":
 	default:
@@ -363,9 +397,13 @@ func (a *App) handleWharfRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	fp := wharfCAFP(chain)
 	code := sign.RandomHex(16)
-	base := firstNonEmpty(a.urlToward(u.Hostname()), a.panelURL("panel.lan_host"), panelBase(r))
+	urls := a.berthAddrsFor("lan", u.Hostname(), panelBase(r))
+	if len(urls) == 0 {
+		urls = []string{panelBase(r)}
+	}
+	base := urls[0]
 	ask, err := wharfapi.RequestPair(ctx, u.String(), fp, wharfapi.PairRequest{Code: code, BerthName: a.panelDisplayName(),
-		BerthURLs: a.ourAddrs(r, base), BerthFP: a.caFP(), WharfFP: fp})
+		BerthURLs: urls, BerthFP: a.caFP(), WharfFP: fp, Mode: "lan"})
 	if err != nil {
 		var we *wharfapi.Error
 		if errorsAs(err, &we) && we.Status == 404 {
@@ -438,7 +476,7 @@ func (a *App) watchWharfAsk(ctx context.Context, q *wharfAsk, actor change.Actor
 				wurl = strings.TrimRight(u.String(), "/")
 			}
 			c, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			res, err := a.completeWharfPair(c, wurl, q.fp, q.base, st.Code, actor)
+			res, err := a.completeWharfPair(c, wurl, q.fp, q.base, st.Code, actor, "lan") // found on the LAN: a LAN link
 			cancel()
 			if err != nil {
 				e := errs.From(err)

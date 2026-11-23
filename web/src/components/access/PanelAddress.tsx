@@ -15,7 +15,7 @@ const isIP = (v: string) => /^[\d.]+$/.test(v) || v.includes(':')
 // The panel's internal and external addresses (Settings → Access). Commands other
 // machines run, such as adding a host, use them. An external domain can follow this
 // server's address through DDNS with one click.
-export function PanelAddress({ lan, pub, savedPub, onChange }: { lan: string; pub: string; savedPub: string; onChange: (k: string, v: string) => void }) {
+export function PanelAddress({ lan, pub, savedPub, onChange, publicOnly }: { lan: string; pub: string; savedPub: string; onChange: (k: string, v: string) => void; publicOnly?: boolean }) {
   const t = useT()
   const run = useChange()
   const check = useApi<AccessCheck>('/api/v1/access/check')
@@ -26,10 +26,10 @@ export function PanelAddress({ lan, pub, savedPub, onChange }: { lan: string; pu
   const root = doms.data?.items.filter((r) => domain === r.root || domain.endsWith('.' + r.root)).sort((a, b) => b.root.length - a.root.length)[0]
   return (
     <>
-      <Field label={t('addr.lan')} hint={t('addr.lan_hint')}>
+      {!publicOnly && <Field label={t('addr.lan')} hint={t('addr.lan_hint')}>
         <Input className="num" value={lan} onChange={(e) => onChange('panel.lan_host', e.target.value.trim())} placeholder={check.data?.lan_ip ? `${check.data.lan_ip} / mini.lan` : 'mini.lan'} />
-      </Field>
-      <Field label={t('addr.public')} hint={t('addr.public_hint')}>
+      </Field>}
+      <Field label={publicOnly ? t('access.public_set') : t('addr.public')} hint={t('addr.public_hint')}>
         <Input className="num" value={pub} onChange={(e) => onChange('panel.public_host', e.target.value.trim())} placeholder={check.data?.public_ip ? `${check.data.public_ip} / panel.example.com` : 'panel.example.com'} />
         {domain && pub === savedPub && (
           <div className="mt-1.5 text-[12px]">

@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -83,6 +84,9 @@ func (a *App) edgeEnv(host string) (caddycfg.Env, error) {
 	defer cancel()
 	env.NoWAF = !a.wafInstalled(ctx, host)
 	env.LocalProxies = a.edgeSubnets(ctx, host)
+	if host == "local" {
+		env.Panel = a.panelEntry() // the panel's own names on 443
+	}
 	return env, nil
 }
 
@@ -252,6 +256,11 @@ func (a *App) applyEdge(env change.Env) error {
 	}
 	if err := a.pushCerts(env.Ctx, env.Host); err != nil {
 		return err
+	}
+	if env.Host == "local" {
+		if err := a.pushEntryCert(env.Ctx); err != nil {
+			log.Printf("panel entry certificate: %v", err) // the panel's names stay on its port; sites go on
+		}
 	}
 	return a.call(env.Ctx, env.Host, "POST", "/v1/edge/load", json.RawMessage(after), nil)
 }

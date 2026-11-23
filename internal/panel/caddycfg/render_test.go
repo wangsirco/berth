@@ -399,3 +399,59 @@ func TestRedirectHostsAndRealIP(t *testing.T) {
 		t.Error("the primary domain cannot redirect to itself")
 	}
 }
+
+// The panel's own names open it on 443: proxied to the panel with the edge secret, the LAN
+// names on the panel's certificate (picked by SNI, never sent to ACME), other sites untouched.
+func TestPanelEntry(t *testing.T) {
+	site := Site{ID: 1, Domains: []string{"blog.example.com"}, Enabled: true, Target: Target{Type: "static"}, TLS: TLS{Mode: "auto"}}
+	b, err := Render([]Site{site}, Env{Panel: &PanelEntry{LANHosts: []string{"mini.lan"}, PublicHosts: []string{"panel.example.com"},
+		Upstream: "host.docker.internal:7090", Secret: "s3cret", Cert: CertFiles{Cert: "/data/c.pem", Key: "/data/k.pem", Version: "abc123abc123"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{`"mini.lan"`, `"panel.example.com"`, `host.docker.internal:7090`, `"X-Berth-Edge"`, `"s3cret"`, `"berth-panel-abc123abc123"`, `"insecure_skip_verify": true`, `"sni"`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %s in\n%s", want, s)
+		}
+	}
+	var cfg map[string]any
+	json.Unmarshal(b, &cfg)
+	srv := cfg["apps"].(map[string]any)["http"].(map[string]any)["servers"].(map[string]any)["https"].(map[string]any)
+	skip := srv["automatic_https"].(map[string]any)["skip"].([]any)
+	if len(skip) != 1 || skip[0] != "mini.lan" {
+		t.Fatalf("ACME skip: %v", skip)
+	}
+	pols := srv["tls_connection_policies"].([]any)
+	if len(pols) != 2 || pols[0].(map[string]any)["match"] == nil || len(pols[1].(map[string]any)) != 0 {
+		t.Fatalf("policies: %v", pols)
+	}
+	routes := srv["routes"].([]any)
+	if h := routes[0].(map[string]any)["match"].([]any)[0].(map[string]any)["host"].([]any); h[0] != "mini.lan" {
+		t.Fatalf("panel route not first: %v", routes[0])
+	}
+}
+
+// An uploaded certificate is picked only for its own site's names; the other sites keep
+// their automatic certificates (before, every site got the uploaded one).
+func TestCustomCertOnlyForItsSite(t *testing.T) {
+	a := Site{ID: 1, Domains: []string{"shop.lan"}, Enabled: true, Target: Target{Type: "static"}, TLS: TLS{Mode: "custom", CertID: 3}}
+	b := Site{ID: 2, Domains: []string{"blog.example.com"}, Enabled: true, Target: Target{Type: "static"}, TLS: TLS{Mode: "auto"}}
+	out, err := Render([]Site{a, b}, Env{Certs: map[int64]CertFiles{3: {Cert: "/c", Key: "/k", Version: "v1v1v1v1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	json.Unmarshal(out, &cfg)
+	pols := cfg["apps"].(map[string]any)["http"].(map[string]any)["servers"].(map[string]any)["https"].(map[string]any)["tls_connection_policies"].([]any)
+	first := pols[0].(map[string]any)
+	sni, _ := first["match"].(map[string]any)["sni"].([]any)
+	if len(pols) != 2 || len(sni) == 0 || sni[0] != "shop.lan" {
+		t.Fatalf("policies: %v", pols)
+	}
+	for _, n := range sni {
+		if n == "blog.example.com" {
+			t.Fatal("uploaded certificate offered to another site")
+		}
+	}
+}

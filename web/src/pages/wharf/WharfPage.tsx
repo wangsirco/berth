@@ -1,4 +1,4 @@
-import { ArrowRight, Ban, Bell, Check, Copy, Download, ExternalLink, Eye, Gauge, KeyRound, Network, Router, ShieldCheck, Waypoints } from 'lucide-react'
+import { ArrowRight, Ban, Bell, Check, Copy, Download, Eye, Gauge, KeyRound, Network, Router, ShieldCheck, Waypoints } from 'lucide-react'
 import { useState } from 'react'
 import { GitHubMark as Github } from '@/components/brand/GitHubMark'
 import { WharfMark } from '@/components/brand/WharfMark'
@@ -8,10 +8,11 @@ import { cx } from '@/components/ui/cx'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
-import { ConnBadge, LiveLine } from '../links/LinksPage'
 import { useEvents } from '@/lib/useEvents'
 import { WharfPair, WharfPaired, type WharfStatus } from '../network/NetworkPage'
 import { PortCheck } from './PortCheck'
+import { WharfHeader } from './WharfHeader'
+import { WharfStats } from './WharfStats'
 
 const REPO = 'https://github.com/wangsirco/wharf'
 const INSTALL = 'opkg install /tmp/luci-app-wharf_*.ipk'
@@ -33,16 +34,8 @@ export default function WharfPage() {
     return (
       <div className="space-y-4">
         {banner}
-        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-box)] border border-line bg-card px-4 py-3">
-          <WharfMark className="size-8" />
-          <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{t('wharfp.paired_with', { name: st.data.link.name })}</div><div className="num truncate text-[12px] text-mute">{st.data.link.url}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-2"><ConnBadge live={st.data.live} /><LiveLine live={st.data.live} />
-              {st.data.link.key_auth && <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-2 py-0.5 text-[11.5px] text-ok" title={t('wharfp.key_auth_hint')} data-key-auth>{t('wharfp.key_auth')}</span>}</div></div>
-          <a href={st.data.link.url} target="_blank" rel="noreferrer"><Button size="sm" variant="primary"><ExternalLink className="size-3.5" />{t('wharf.open')}</Button></a>
-          <a href={REPO} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Github className="size-3.5" />GitHub</Button></a>
-        </div>
-        <WharfPaired st={st.data} reload={() => void st.reload()} />
-        <PortCheck />
+        <WharfHeader st={st.data} reload={() => void st.reload()} />
+        <WharfStats st={st.data} settings={<><WharfPaired st={st.data} reload={() => void st.reload()} /><PortCheck /></>} />
       </div>
     )
   }

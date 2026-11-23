@@ -392,8 +392,9 @@ func (a *App) handleLinkRequestOut(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	// the address the other panel reaches this one at: the LAN way towards it first
-	addrs := a.ourAddrs(r, a.urlToward(host))
-	code := encodeLinkCode(linkCode{V: 1, Addrs: addrs, FP: a.caFP(), S: secret, Name: a.panelDisplayName(), Pub: base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes())})
+	addrs := a.berthAddrsFor("lan", host, panelBase(r)) // found on the LAN: a LAN link
+	a.db.Exec(`UPDATE panel_links SET mode='lan' WHERE id=?`, id)
+	code := encodeLinkCode(linkCode{V: 1, Addrs: addrs, FP: a.caFP(), S: secret, Name: a.panelDisplayName(), Pub: base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes()), Mode: "lan"})
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := linkPlain(ctx, strings.TrimRight(in.Addr, "/"), in.FP, "/link-api/request", map[string]string{"code": code, "from": a.panelDisplayName()}, nil); err != nil {

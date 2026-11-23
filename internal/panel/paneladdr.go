@@ -58,6 +58,9 @@ func (a *App) panelURL(key string) string {
 	if h == "" {
 		return ""
 	}
+	if a.entryServes(h) { // the edge serves this name on 443: no port
+		return "https://" + h
+	}
 	return "https://" + net.JoinHostPort(h, a.panelPort())
 }
 

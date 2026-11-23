@@ -47,7 +47,7 @@ var routeHooks []func(a *App, mux *http.ServeMux)
 func (a *App) securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
-		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' "+a.connectSrc()+"; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		hd.Set("Referrer-Policy", "no-referrer")
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Strict-Transport-Security", "max-age=31536000")
@@ -111,7 +111,7 @@ func (a *App) entryGate(h http.Handler) http.Handler {
 		// Tokens, signed-in sessions and the CA download do not need the entry cookie.
 		// invitation, file-share, desktop-share and proxy-subscription links check their own codes
 		// …and Wharf's pairing callback, which checks the one-time code this panel handed out
-		if strings.HasPrefix(r.URL.Path, "/invite/") || strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/v/") || strings.HasPrefix(r.URL.Path, "/sub/") || r.URL.Path == "/wharf/paired" {
+		if strings.HasPrefix(r.URL.Path, "/invite/") || strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/v/") || strings.HasPrefix(r.URL.Path, "/sub/") || r.URL.Path == "/wharf/paired" || strings.HasPrefix(r.URL.Path, "/hop/") || r.URL.Path == "/sso/wharf" {
 			h.ServeHTTP(w, r)
 			return
 		}

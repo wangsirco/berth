@@ -27,6 +27,9 @@ type Config struct {
 	EtcDir     string   `json:"etc_dir"`     // /etc/berth
 	AllowCIDRs []string `json:"allow_cidrs"` // who may reach the panel at all
 	Public     bool     `json:"public"`      // allow any source address (forces two-step sign-in)
+	// NoEdgeEntry: leave the edge's panel route alone (a second panel sharing the agent, such
+	// as a test instance, must not take over the main panel's names on 443)
+	NoEdgeEntry bool `json:"no_edge_entry,omitempty"`
 }
 
 var DefaultAllowCIDRs = []string{
@@ -147,7 +150,7 @@ func (a *App) clientIP(r *http.Request) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || a.fromEdge(r)) { // the edge passes the visitor on
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := splitList(xff)
 			if v := net.ParseIP(parts[len(parts)-1]); v != nil {

@@ -73,6 +73,13 @@ func init() {
 			out := map[string]any{"hostname": m.Hostname, "suggested": firstNonEmpty(m.Hostname, "berth") + ".local", "current": cur,
 				"port": a.panelPort(), "ip": a.lanIP(), "mdns": m, "wharf_paired": werr == nil, "opened_as": hostOnly(r.Host),
 				"entry": a.setting("access.entry")} // the new name needs the entry path once, like any new address
+			served := []string{} // names the edge already serves on 443 (no port)
+			for _, n := range append([]string{cur, m.Hostname + ".local", m.Hostname + ".lan"}, m.Aliases...) {
+				if n != "" && a.entryServes(n) {
+					served = append(served, n)
+				}
+			}
+			out["no_port"] = served
 			if c, l, sfx := a.wharfDNS(ctx); c != nil { // the router registers .lan names itself
 				out["wharf_dns"] = map[string]any{"suffixes": sfx, "registered": l.DNSName}
 			}
@@ -177,6 +184,7 @@ func init() {
 			if a.certRefresh != nil {
 				go a.certRefresh()
 			}
+			go func() { a.entrySyncSoon(); a.notifyWharfNames() }() // the new name opens the panel on 443 too; Wharf learns it
 			u, _ := json.Marshal(nameParams{Name: prev})
 			return map[string]string{"name": p.Name}, &change.UndoRecipe{Kind: "panel.local_name", Params: u}, nil
 		},

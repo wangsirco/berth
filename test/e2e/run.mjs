@@ -99,6 +99,8 @@ const api = (path, init = {}) => page.evaluate(async (p, i) => { const r = await
 
 const browser = await puppeteer.launch({ executablePath: browserPath, headless: true, acceptInsecureCerts: true, args: ['--ignore-certificate-errors', '--no-first-run'] })
 const page = await browser.newPage()
+// the e2e panel stays on localhost: no moving to the panel's main name (checked on its own)
+await page.evaluateOnNewDocument(() => { try { sessionStorage.setItem('berth.main-name.skip', '1') } catch {} })
 const consoleLog = []
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warn') consoleLog.push(m.text().slice(0, 300)) })
 page.on('pageerror', (e) => consoleLog.push('pageerror: ' + e.message.slice(0, 300)))
@@ -122,9 +124,10 @@ await spec('setup-login', async () => {
   await page.screenshot({ path: OUT + 'welcome-access.png', fullPage: true })
   await fill('安全入口', '') // keep the e2e panel reachable without an entry path
   await click(btn('下一步')) // access
-  await waitText('本地域名（可选）') // optional, for Passkey: skipped here (the local-name spec walks it)
-  await waitText('想用 Passkey')
-  await click(btn('下一步'))
+  await waitText('内网域名（推荐）') // recommended, on by default; skipped here (the local-name spec walks it)
+  await waitText('不用记 IP 和端口')
+  await page.screenshot({ path: OUT + 'welcome-localname.png', fullPage: true })
+  await click(btn('先不开，以后再说'))
   await waitText('保护你的账号')
   await click(btn('设置验证器'))
   await waitText('用验证器 App 扫描')
@@ -516,7 +519,7 @@ await spec('wharf', async () => {
   sh('go', ['build', '-o', 'bin/linux-arm64/fakewharf', './scripts/fakewharf'], { env: { ...process.env, PATH: '/opt/homebrew/bin:' + process.env.PATH, GOOS: 'linux', GOARCH: 'arm64', CGO_ENABLED: '0' } })
   sh('ssh', [HOST, 'pkill -f "^/tmp/fakewharf"; sleep 0.5; true'])
   sh('scp', ['-q', 'bin/linux-arm64/fakewharf', HOST + ':/tmp/fakewharf'])
-  sh('ssh', [HOST, '(setsid nohup /tmp/fakewharf >/tmp/fakewharf.log 2>&1 </dev/null &) ; sleep 1; head -1 /tmp/fakewharf.log'])
+  sh('ssh', [HOST, '(setsid nohup /tmp/fakewharf -v3 >/tmp/fakewharf.log 2>&1 </dev/null &) ; sleep 1; head -1 /tmp/fakewharf.log'])
   const state = () => JSON.parse(sh('ssh', [HOST, 'curl -s 127.0.0.1:41444/debug/state']))
   // a disabled site (disabled sites stay out of the shared gateway's config)
   sh('ssh', [HOST, `sqlite3 /var/lib/berth-e2e/berth.db "INSERT INTO sites(host, primary_domain, domains, enabled, target, tls, options, created_at, updated_at) VALUES('local','e2e-wharf.example.net','[\\"e2e-wharf.example.net\\"]',0,'{\\"type\\":\\"static\\"}','{\\"mode\\":\\"internal\\"}','{}',strftime('%s'),strftime('%s'))"`])
@@ -525,7 +528,8 @@ await spec('wharf', async () => {
   await waitText('三步把 Wharf 和 Berth 连起来') // the introduction, then pairing
   await waitText('github.com/wangsirco/wharf')
   await page.screenshot({ path: OUT + 'wharf-intro.png', fullPage: true })
-  const url = await page.waitForSelector('input[placeholder="https://192.168.1.1:8443"]')
+  await waitText('两台在同一个局域网吗？') // LAN or internet first
+  const url = await page.waitForSelector('input[placeholder="https://wharf.lan:7080"]')
   await url.click()
   await url.type('https://127.0.0.1:41443')
   await click(btn('检查证书'))
@@ -538,6 +542,20 @@ await spec('wharf', async () => {
   await page.waitForFunction(() => location.pathname === '/local/wharf', { timeout: 15000 })
   await waitText('Wharf · 家里')
   assert(state().paired === true, 'fake Wharf not paired')
+  // the page: Wharf's names and the LAN link on top, its statistics drawn here
+  await page.waitForSelector('[data-wharf-header] [data-link-mode=lan]', { timeout: 15000 })
+  await page.waitForSelector('[data-tile=devices]', { timeout: 30000 })
+  await waitText('23') // devices online, from Wharf's summary
+  await page.waitForSelector('[data-flow-chart] polyline')
+  await page.screenshot({ path: OUT + 'wharf-overview.png', fullPage: true })
+  await click('[data-tile=devices]') // every number opens its tab
+  await page.waitForSelector('[data-device="aa:bb:cc:00:11:22"]', { timeout: 15000 })
+  await click('[data-device="aa:bb:cc:00:11:22"]')
+  await page.waitForSelector('[data-device-detail] [data-flow-chart]', { timeout: 15000 })
+  await page.screenshot({ path: OUT + 'wharf-device.png', fullPage: true })
+  await click('::-p-xpath(//*[@role="tablist"]//*[normalize-space(.)="流量"])')
+  await page.waitForSelector('[data-bar-row="YouTube"]', { timeout: 15000 })
+  await click('::-p-xpath(//*[@role="tablist"]//*[normalize-space(.)="联动设置"])') // the settings, where publishing lives
   await waitText('e2e-wharf.example.net')
   const port = await page.waitForSelector('::-p-aria(外网端口)')
   await port.click()
@@ -714,7 +732,10 @@ await spec('local-name', async () => {
   const st = (await api('/api/v1/local-name')).body
   assert(st.suggested === hostName + '.local' && st.ip, 'status: ' + JSON.stringify(st))
   await page.goto(`${BASE}/local/settings`)
-  await click('::-p-xpath(//button[normalize-space(.)="设置本地域名"])')
+  await page.waitForSelector('[data-access-card]', { timeout: 15000 }) // where the panel opens: LAN, internet, fallback
+  await waitText('访问地址')
+  await page.screenshot({ path: OUT + 'access-card.png' })
+  await click('::-p-xpath((//*[@data-access-row="内网"]//button)[last()])')
   await page.waitForSelector('[data-local-name-guide]', { timeout: 15000 })
   await waitText('用 ' + hostName + '.local（推荐）')
   await click('::-p-xpath(//*[@data-local-name-guide]//button[normalize-space(.)="启用这个名字"])')

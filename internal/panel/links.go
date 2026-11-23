@@ -69,18 +69,19 @@ type panelLink struct {
 	ExpiresAt   int64    `json:"expires_at,omitempty"`
 	ConfirmedAt int64    `json:"confirmed_at,omitempty"`
 	LastAddr    string   `json:"last_addr,omitempty"`
+	Mode        string   `json:"mode"` // lan | public ("" before modes: whatever answers)
 	key         []byte
 	secretHash  string
 	priv        []byte
 }
 
-const linkCols = `id, role, status, name, slug, addrs, fp, uid, key_enc, secret_hash, priv_enc, sas, hosts, by_user, by_id, created_at, expires_at, confirmed_at, last_addr`
+const linkCols = `id, role, status, name, slug, addrs, fp, uid, key_enc, secret_hash, priv_enc, sas, hosts, by_user, by_id, created_at, expires_at, confirmed_at, last_addr, mode`
 
 func (a *App) scanLink(row interface{ Scan(...any) error }) (*panelLink, error) {
 	var l panelLink
 	var addrs, hosts string
 	var keyEnc, privEnc []byte
-	if err := row.Scan(&l.ID, &l.Role, &l.Status, &l.Name, &l.Slug, &addrs, &l.FP, &l.UID, &keyEnc, &l.secretHash, &privEnc, &l.SAS, &hosts, &l.By, &l.ByID, &l.CreatedAt, &l.ExpiresAt, &l.ConfirmedAt, &l.LastAddr); err != nil {
+	if err := row.Scan(&l.ID, &l.Role, &l.Status, &l.Name, &l.Slug, &addrs, &l.FP, &l.UID, &keyEnc, &l.secretHash, &privEnc, &l.SAS, &hosts, &l.By, &l.ByID, &l.CreatedAt, &l.ExpiresAt, &l.ConfirmedAt, &l.LastAddr, &l.Mode); err != nil {
 		return nil, err
 	}
 	json.Unmarshal([]byte(addrs), &l.Addrs)
@@ -134,6 +135,7 @@ type linkCode struct {
 	S     string   `json:"s"` // one-time secret
 	Name  string   `json:"n"`
 	Pub   string   `json:"k"` // X25519 public key (base64)
+	Mode  string   `json:"m,omitempty"` // lan | public: which names both sides use
 }
 
 func encodeLinkCode(c linkCode) string {

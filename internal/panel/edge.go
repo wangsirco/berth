@@ -240,6 +240,9 @@ func (a *App) edgeLoop(ctx context.Context) {
 				a.ensureEdge(c, h)
 				cancel()
 			}
+			c, cancel := context.WithTimeout(ctx, 60*time.Second)
+			a.entrySync(c) // the panel's names on 443 follow name changes and renewals
+			cancel()
 		}
 	}
 }

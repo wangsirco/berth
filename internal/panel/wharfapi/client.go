@@ -440,11 +440,15 @@ func (c *Client) Alert(ctx context.Context, a Alert) error {
 }
 
 // Ticket asks Wharf for a one-time sign-in link for a Berth user (§4.7).
-func (c *Client) Ticket(ctx context.Context, berthUser, returnTo string) (string, error) {
+func (c *Client) Ticket(ctx context.Context, berthUser, returnTo, via string) (string, error) {
 	var out struct {
 		URL string `json:"url"`
 	}
-	err := c.Do(ctx, "POST", "/sso/ticket", "", map[string]string{"berth_user": berthUser, "return_to": returnTo}, &out)
+	in := map[string]string{"berth_user": berthUser, "return_to": returnTo}
+	if via != "" {
+		in["via"] = via // lan | public (protocol 3)
+	}
+	err := c.Do(ctx, "POST", "/sso/ticket", "", in, &out)
 	return out.URL, err
 }
 
@@ -482,6 +486,7 @@ type PairRequest struct {
 	BerthURLs []string `json:"berth_urls"`
 	BerthFP   string   `json:"berth_fp"`
 	WharfFP   string   `json:"wharf_fp"`
+	Mode      string   `json:"mode,omitempty"` // lan | public (protocol 3)
 }
 
 type PairAsk struct {
@@ -545,4 +550,21 @@ func (c *Client) DeleteDNSName(ctx context.Context, actor, name string) error {
 		return nil
 	}
 	return err
+}
+
+// Names: Wharf's LAN and public addresses (protocol 3).
+type Names struct {
+	LAN    string `json:"lan"`
+	Public string `json:"public"`
+	LANFP  string `json:"lan_fp,omitempty"`
+}
+
+func (c *Client) Names(ctx context.Context) (Names, error) {
+	var out Names
+	return out, c.Do(ctx, "GET", "/names", "", nil, &out)
+}
+
+// Event tells Wharf about a change on Berth's side (POST /events).
+func (c *Client) Event(ctx context.Context, ev map[string]any) error {
+	return c.Do(ctx, "POST", "/events", "", ev, nil)
 }

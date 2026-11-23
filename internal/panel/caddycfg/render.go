@@ -18,7 +18,9 @@ type Env struct {
 	DNS map[string]map[string]any
 	// Uploaded certificates by id: paths inside the container.
 	Certs map[int64]CertFiles
-	// Panel exposes the panel itself through the edge (optional).
+	// Panel exposes the panel itself through the edge (optional): its names open it on
+	// 443, without a port.
+	Panel *PanelEntry
 	SitesRoot string // inside the container, default /srv/sites
 	LogsRoot  string // inside the container, default /var/log/caddy
 	// ProjectPorts: the port each native project currently serves on (0 or missing: not deployed)
@@ -28,6 +30,15 @@ type Env struct {
 	// LocalProxies: subnets of local proxies in front of the edge whose CF-Connecting-IP /
 	// X-Forwarded-For carry the visitor (the edge network, where cloudflared runs)
 	LocalProxies []string
+}
+
+// PanelEntry: the panel's own names, proxied to the panel (which still listens on its port).
+type PanelEntry struct {
+	LANHosts    []string  // local names (mini.lan, mini.local): the certificate below, signed by the panel's CA
+	PublicHosts []string  // public names: certificates from ACME like any site
+	Upstream    string    // host:port of the panel as the edge reaches it
+	Cert        CertFiles // for LANHosts
+	Secret      string    // X-Berth-Edge: the panel trusts X-Forwarded-For only with it
 }
 
 type CertFiles struct {
@@ -60,6 +71,7 @@ func Render(sites []Site, env Env) ([]byte, error) {
 	var skip []string
 	var policies []any
 	var loadFiles []any
+	loadSNI := map[string][]string{} // tag → the names that certificate is for
 	logs := obj{"default": obj{"level": "WARN", "exclude": []string{}}}
 	loggerNames := obj{}
 	httpLoggerNames := obj{}
@@ -115,7 +127,11 @@ func Render(sites []Site, env Env) ([]byte, error) {
 			if !ok {
 				return nil, bad("site.tls_cert_missing")
 			}
-			loadFiles = append(loadFiles, obj{"certificate": cf.Cert, "key": cf.Key, "tags": []string{certTag(s.TLS.CertID, cf.Version)}})
+			tag := certTag(s.TLS.CertID, cf.Version)
+			if _, seen := loadSNI[tag]; !seen {
+				loadFiles = append(loadFiles, obj{"certificate": cf.Cert, "key": cf.Key, "tags": []string{tag}})
+			}
+			loadSNI[tag] = append(loadSNI[tag], subjects...)
 			skip = append(skip, subjects...) // no ACME for these names
 		}
 		// access log, one file per site
@@ -132,6 +148,22 @@ func Render(sites []Site, env Env) ([]byte, error) {
 			if s.TLS.Mode == "off" || s.Options.NoHTTPSRedirect {
 				httpLoggerNames[h] = []string{name}
 			}
+		}
+	}
+	if p := env.Panel; p != nil && p.Upstream != "" && len(p.LANHosts)+len(p.PublicHosts) > 0 {
+		hosts := append(append([]string{}, p.LANHosts...), p.PublicHosts...)
+		up := obj{"handler": "reverse_proxy", "upstreams": []any{obj{"dial": p.Upstream}},
+			// the panel's own certificate on its own port: same machine, nothing to verify
+			"transport":      obj{"protocol": "http", "tls": obj{"insecure_skip_verify": true}},
+			"flush_interval": -1, // live events and terminals stream
+			"headers": obj{"request": obj{"set": obj{
+				"X-Berth-Edge":      []string{p.Secret},
+				"X-Forwarded-Proto": []string{"https"},
+			}}}}
+		httpsRoutes = append([]any{obj{"match": []any{obj{"host": hosts}}, "handle": []any{up}, "terminal": true}}, httpsRoutes...)
+		if len(p.LANHosts) > 0 && p.Cert.Cert != "" {
+			loadFiles = append(loadFiles, obj{"certificate": p.Cert.Cert, "key": p.Cert.Key, "tags": []string{"berth-panel-" + p.Cert.Version}})
+			skip = append(skip, p.LANHosts...) // never ask ACME for local names
 		}
 	}
 	// WAF matches: one file the agent reads (rule hits and blocks, per site via the tag)
@@ -163,7 +195,15 @@ func Render(sites []Site, env Env) ([]byte, error) {
 			var pols []any
 			for _, lf := range loadFiles {
 				tag := lf.(obj)["tags"].([]string)[0]
-				pols = append(pols, obj{"certificate_selection": obj{"any_tag": []string{tag}}})
+				if strings.HasPrefix(tag, "berth-panel-") {
+					continue // matched by SNI below
+				}
+				// only for its own names: a policy without a match takes every connection,
+				// and every site would get this certificate
+				pols = append(pols, obj{"match": obj{"sni": loadSNI[tag]}, "certificate_selection": obj{"any_tag": []string{tag}}})
+			}
+			if p := env.Panel; p != nil && len(p.LANHosts) > 0 && p.Cert.Cert != "" { // the panel's names: by SNI, first
+				pols = append([]any{obj{"match": obj{"sni": p.LANHosts}, "certificate_selection": obj{"any_tag": []string{"berth-panel-" + p.Cert.Version}}}}, pols...)
 			}
 			// a catch-all policy keeps automatic certificates working for the other names
 			srv["tls_connection_policies"] = append(pols, obj{})
