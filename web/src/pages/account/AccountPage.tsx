@@ -13,6 +13,7 @@ import { SshKeys } from './SshKeys'
 import { quickMode } from '@/components/change/ChangeDialog'
 
 export default function AccountPage() {
+  const movedHere = new URLSearchParams(location.search).get('passkey') === 'add' // arrived from the move to the new name
   const t = useT()
   const { user, refresh } = useAuth()
   const [locale, setLocale] = useLocale()
@@ -58,7 +59,8 @@ export default function AccountPage() {
           <DeviceList />
         </div>
         <div className="space-y-4">
-          <PasskeyList onChange={refresh} />
+          {movedHere && <Notice tone="acc">{t('move.add_here', { host: location.hostname })}</Notice>}
+          <PasskeyList onChange={refresh} highlight={movedHere} />
           <TotpSetup onChange={refresh} />
           <LoginModeCard />
           <SshKeys />

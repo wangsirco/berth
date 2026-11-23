@@ -14,6 +14,7 @@ import { useEvents } from '@/lib/useEvents'
 import { ReauthProvider, useReauth } from '../account/reauth'
 import { WharfMark } from '@/components/brand/WharfMark'
 import { WharfAsk } from './WharfAsk'
+import { AdoptChoice } from '../wharf/FindWharf'
 
 // 面板互联: servers that both run Berth. One panel (main) manages what the other hands over;
 // the other keeps working by itself and can take them back. This page explains the two ways
@@ -358,6 +359,7 @@ function ScanDialog({ onClose }: { onClose: () => void }) {
   const [res, setRes] = useState<{ items: Found[]; nets: string[] } | null>(null)
   const [err, setErr] = useState('')
   const [asked, setAsked] = useState<Record<string, 'sent' | 'done' | string>>({})
+  const [adopt, setAdopt] = useState(true)
   const scan = () => { setRes(null); setErr(''); post<{ items: Found[]; nets: string[] }>('/api/v1/links/scan').then(setRes).catch((e) => setErr(errText(e))) }
   useEffect(scan, [])
   // after a request: wait for the other side to allow (this panel then confirms by itself)
@@ -388,7 +390,7 @@ function ScanDialog({ onClose }: { onClose: () => void }) {
               <div className="num text-[12px] text-mute">{f.addr}{f.version ? ` · ${f.version}` : ''}{f.managed ? ` · ${t('links.already_managed', { name: f.managed })}` : ''}</div>
             </div>
             {f.kind === 'wharf'
-              ? <WharfAsk addr={f.addr} onManual={() => { onClose(); nav('/local/wharf?url=' + encodeURIComponent(f.addr)) }} />
+              ? <div className="w-full space-y-2"><AdoptChoice adopt={adopt} setAdopt={setAdopt} /><WharfAsk addr={f.addr} adopt={adopt} onManual={() => { onClose(); nav('/local/wharf?url=' + encodeURIComponent(f.addr)) }} /></div>
               : asked[f.fp!] === 'done' ? <Pill tone="acc">{t('links.linked_now')}</Pill>
                 : asked[f.fp!] === 'sent' ? <span className="flex items-center gap-2 text-[12px] text-mute"><span className="size-2 animate-pulse rounded-full bg-acc" />{t('links.wait_allow', { name: f.name ?? '' })}</span>
                   : <Button size="sm" variant="primary" disabled={!!f.managed} onClick={() => void ask(f)}>{t('links.ask_manage')}</Button>}

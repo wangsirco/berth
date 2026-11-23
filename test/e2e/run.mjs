@@ -528,12 +528,16 @@ await spec('wharf', async () => {
   await waitText('三步把 Wharf 和 Berth 连起来') // the introduction, then pairing
   await waitText('github.com/wangsirco/wharf')
   await page.screenshot({ path: OUT + 'wharf-intro.png', fullPage: true })
+  await page.waitForSelector('[data-find-wharf]') // step 2 looks for the router's Wharf by itself
+  await page.screenshot({ path: OUT + 'wharf-find.png', fullPage: true })
+  await click('::-p-xpath(//button[normalize-space(.)="或者手动填地址配对"])')
   await waitText('两台在同一个局域网吗？') // LAN or internet first
   const url = await page.waitForSelector('input[placeholder="https://wharf.lan:7080"]')
   await url.click()
   await url.type('https://127.0.0.1:41443')
   await click(btn('检查证书'))
   await waitText('Berth 的证书指纹')
+  await page.waitForSelector('[data-adopt-choice] input:checked') // the rename is said before pairing, on by default
   // Wharf's approval page is simulated: catch the redirect and come back with its code
   const req = page.waitForRequest((r) => r.url().includes('/pair/berth?'), { timeout: 10000 })
   await click(btn('前往 Wharf 授权'))

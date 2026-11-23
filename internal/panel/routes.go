@@ -123,6 +123,9 @@ func (a *App) entryGate(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r)
 			return
 		}
+		if a.friendlyGate(w, r) { // on the LAN, by the panel's own name: say what to do
+			return
+		}
 		blank404(w)
 	})
 }

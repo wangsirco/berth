@@ -71,12 +71,21 @@ func init() {
 		mux.HandleFunc("GET /api/v1/access/where", func(w http.ResponseWriter, r *http.Request) {
 			lan, pub := a.mainLAN(), a.mainPublic()
 			cur := strings.ToLower(hostOnly(r.Host))
+			pk := func(rp string) int { // Passkeys belong to a name: how many exist on this one
+				var n int
+				a.db.QueryRow(`SELECT COUNT(*) FROM passkeys WHERE rp_id=?`, rp).Scan(&n)
+				return n
+			}
 			writeJSON(w, 200, map[string]any{
 				"lan": a.nameURL(lan), "lan_name": lan, "public": a.nameURL(pub), "public_name": pub,
 				"current": cur, "is_main": cur == lan || (pub != "" && cur == pub),
 				"fallback": "https://" + net.JoinHostPort(firstNonEmpty(a.lanIP(), cur), a.panelPort()),
 				"setup":    a.userCount() == 0,
 				"renamed":  a.setting("access.renamed"), // "old>new" after the main name changed (Passkey needs adding again)
+				// moving to the main name before signing in would leave Passkeys behind: the page
+				// waits when they exist here and not there
+				"passkeys_here": pk(cur), "passkeys_main": pk(lan), "old_name": a.oldName(lan),
+				"adopt_on_pair": a.setting("access.adopt_on_pair") != "0",
 			})
 		})
 		// a one-time link to the main name (lan | public) that keeps the entry and the sign-in
@@ -145,7 +154,7 @@ func init() {
 // adoptLANName: paired with a Wharf that registers names, the panel's LAN name becomes
 // host.lan (every device on the LAN resolves it, not only those that speak mDNS)
 func (a *App) adoptLANName(scopes []string) {
-	if !contains(scopes, "dns") {
+	if !contains(scopes, "dns") || a.setting("access.adopt_on_pair") == "0" { // the person said keep the name
 		return
 	}
 	cur := strings.ToLower(a.setting("panel.lan_host"))
@@ -172,6 +181,7 @@ func (a *App) adoptLANName(scopes []string) {
 	}
 	if c.Status == "done" {
 		a.setSetting("access.renamed", old+">"+name)
+		a.setSetting("access.renamed_from", old) // stays after the notice is seen (for Passkeys left there)
 	}
 }
 
@@ -194,4 +204,19 @@ func (a *App) peerPublicNames() []string {
 	names := []string{strings.ToLower(a.setting("panel.public_host"))}
 	names = append(names, splitList(a.setting("access.peer_public"))...)
 	return names
+}
+
+// oldName: the name the panel was opened by before it was renamed ("" when the same)
+func (a *App) oldName(lan string) string {
+	if r := a.setting("access.renamed_from"); r != "" && r != lan {
+		return r
+	}
+	if b := hostBase(); b != "" && b+".local" != lan {
+		var n int
+		a.db.QueryRow(`SELECT COUNT(*) FROM passkeys WHERE rp_id=?`, b+".local").Scan(&n)
+		if n > 0 {
+			return b + ".local"
+		}
+	}
+	return ""
 }

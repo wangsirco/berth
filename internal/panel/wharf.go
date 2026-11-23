@@ -223,8 +223,14 @@ func init() {
 				a.fail(w, r, errs.New(403, "auth.forbidden"))
 				return
 			}
-			var in struct{ URL, FP, Mode string }
+			var in struct {
+				URL, FP, Mode string
+				Adopt         *bool `json:"adopt"` // after pairing, open the panel as host.lan (asked before)
+			}
 			readJSON(r, &in)
+			if in.Adopt != nil {
+				a.setSetting("access.adopt_on_pair", map[bool]string{true: "1", false: "0"}[*in.Adopt])
+			}
 			u, err := url.Parse(strings.TrimRight(in.URL, "/"))
 			if err != nil || u.Scheme != "https" || u.Host == "" || len(in.FP) != 64 {
 				a.fail(w, r, errs.New(400, "wharf.bad_url"))

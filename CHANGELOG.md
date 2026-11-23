@@ -2,6 +2,32 @@
 
 简体中文在前，English below each version.
 
+## 1.6.2 · 2026-11-23
+
+**和路由器绑定，从头到尾都说清楚**
+- **Wharf 页直接内网发现**：左侧「Wharf 码头」的第 2 步会自己在网关上找路由器的 Wharf（优先用 `wharf.lan`），找到就能在这里「申请绑定」，不用再绕到「面板互联」。手动填地址配对收在下面，需要时展开。
+- **换名字之前先告诉你**：配对前明确写着「配对后，面板改用 `mini.lan` 打开」，默认勾选（推荐），也可以不改。你的 Passkey 在旧名字上时，会提前说明之后要在新名字上再添加一次。
+- **配对完一步步带你迁移**：
+  - 马上弹出说明：新地址是什么、Passkey 跟着名字走、旧地址还能用；
+  - 一个按钮带着登录状态去新地址，直接停在「添加 Passkey」。
+- **旧地址不再把你挡在外面**：
+  - Passkey 还在旧地址上时，登录前不会把你跳走，先在旧地址用 Passkey 登录，登录后再带你去新地址；
+  - 新地址的登录页如果还没有你的 Passkey，会给出「回到旧地址用 Passkey 登录」。
+- **不再只给一个 404**：在局域网里用面板自己的名字打开、但没带安全入口时，会显示一页说明：
+  - 面板的新地址；
+  - 要用安全入口打开；
+  - 忘了安全入口或密码时，在服务器上运行 `sudo berth admin`。
+
+  页面不会透露安全入口本身；公网来的访问照旧只回 404。
+
+---
+
+- The Wharf page finds the router's Wharf by itself and binds it there (pairing by address folded below).
+- Before pairing it says the panel will move to host.lan (on by default, can be kept off).
+- Afterwards a dialog walks you over: the new address, Passkeys belong to a name, go there signed in and add one.
+- The old name lets you sign in with your existing Passkey first and then takes you over; the new name's login page links back when it has no Passkey yet.
+- On the LAN, the panel's own name without the security entry shows an explanation instead of a bare 404 (never the entry itself).
+
 ## 1.6.1 · 2026-11-23
 
 **修复：用 `https://mini.local`（不带端口）打开面板，进了安全入口马上跳到 404**

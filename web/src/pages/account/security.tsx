@@ -15,7 +15,7 @@ import { useReauth } from './reauth'
 
 const msg = (e: unknown) => (e instanceof PasskeyCancelled ? '' : (e as Error).message)
 
-export function PasskeyList({ onChange }: { onChange?: () => void }) {
+export function PasskeyList({ onChange, highlight }: { onChange?: () => void; highlight?: boolean }) {
   const t = useT()
   const reauth = useReauth()
   const list = useApi<{ items: { id: number; name: string; rp_id: string; created_at: number; last_used_at: number }[]; usable: boolean; here: string }>('/api/v1/me/passkeys')
@@ -36,7 +36,7 @@ export function PasskeyList({ onChange }: { onChange?: () => void }) {
     if (n && n !== name) { await patch(`/api/v1/me/passkeys/${id}`, { name: n }); await list.reload() }
   }
   return (
-    <Box title="Passkey" right={<Button size="sm" onClick={() => void add()} disabled={!can}><KeyRound className="size-3.5" />{t('passkey.add')}</Button>}>
+    <Box title="Passkey" right={<Button size="sm" variant={highlight ? 'primary' : 'default'} className={highlight ? 'ring-2 ring-acc ring-offset-2' : undefined} onClick={() => void add()} disabled={!can} data-passkey-add><KeyRound className="size-3.5" />{t('passkey.add')}</Button>}>
       {err && <div className="p-3"><Notice tone="bad">{err}</Notice></div>}
       {!can && <div className="px-3.5 py-2 text-[12.5px] text-mute">{onIPAddress() ? t('login.passkey_needs_name') : t('login.passkey_unsupported')}
         {onIPAddress() && authUser?.role === 'super' && <button type="button" className="ml-2 text-acc hover:underline" onClick={() => setGuide(true)}>{t('lname.title')}</button>}</div>}

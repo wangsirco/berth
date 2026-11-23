@@ -13,6 +13,8 @@ import { WharfPair, WharfPaired, type WharfStatus } from '../network/NetworkPage
 import { PortCheck } from './PortCheck'
 import { WharfHeader } from './WharfHeader'
 import { WharfStats } from './WharfStats'
+import { FindWharf } from './FindWharf'
+import { RenamedNow } from '@/components/access/MainName'
 
 const REPO = 'https://github.com/wangsirco/wharf'
 const INSTALL = 'opkg install /tmp/luci-app-wharf_*.ipk'
@@ -29,7 +31,7 @@ export default function WharfPage() {
   const paired = q.get('paired')
   const banner = paired && (paired === 'error'
     ? <Notice tone="bad">{t('wharf.pair_failed', { reason: q.get('reason') ? t(q.get('reason')!) : '' })}</Notice>
-    : <Notice tone="acc">{t('wharf.pair_done', { name: paired })}</Notice>)
+    : <><Notice tone="acc">{t('wharf.pair_done', { name: paired })}</Notice><RenamedNow /></>) // back from Wharf: the rename follows
   if (st.data.paired && st.data.link) {
     return (
       <div className="space-y-4">
@@ -118,7 +120,7 @@ function Intro({ berthFP, banner }: { berthFP: string; banner?: React.ReactNode 
         </Step>
         <Step n={2} title={t('wharfp.s2')}>
           <p className="mb-2 text-[12.5px] text-mute">{t('wharfp.s2_d')}</p>
-          {user?.role === 'super' ? <WharfPair berthFP={berthFP} bare /> : <Notice>{t('wharf.super_only')}</Notice>}
+          {user?.role === 'super' ? <FindWharf manual={<WharfPair berthFP={berthFP} bare />} /> : <Notice>{t('wharf.super_only')}</Notice>}
         </Step>
         <Step n={3} title={t('wharfp.s3')} last>
           <p className="text-[12.5px] text-mute">{t('wharfp.s3_d')}</p>

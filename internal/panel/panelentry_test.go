@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -87,5 +88,40 @@ func TestHopToMainName(t *testing.T) {
 	}
 	if r := get("nas.lan"); r.StatusCode != 404 {
 		t.Fatal("hop used twice")
+	}
+}
+
+// Behind the security entry, someone on the LAN opening the panel's own name gets told what
+// to do (never the entry itself); other names and API calls still get the bare 404.
+func TestFriendlyGate(t *testing.T) {
+	c := newTC(t)
+	c.mkUser("root", "correct horse 9", "super")
+	c.app.setSetting("access.entry", "/s3cret-way")
+	c.app.setSetting("panel.lan_host", "nas.lan")
+	get := func(host, accept string) (int, string) {
+		req, _ := http.NewRequest("GET", c.srv.URL+"/", nil)
+		req.Host = host
+		req.Header.Set("Accept", accept)
+		resp, err := (&http.Client{Transport: c.srv.Client().Transport}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b := new(strings.Builder)
+		io.Copy(b, resp.Body)
+		return resp.StatusCode, b.String()
+	}
+	code, body := get(hostBase()+".local", "text/html") // the machine's own name, before the rename
+	if code != 404 || !strings.Contains(body, "https://nas.lan") || !strings.Contains(body, "安全入口") || strings.Contains(body, "s3cret") {
+		t.Fatalf("old name: %d %s", code, body)
+	}
+	if _, body := get("nas.lan", "text/html"); !strings.Contains(body, "安全入口") || strings.Contains(body, "新地址") {
+		t.Fatalf("main name: %s", body)
+	}
+	if _, body := get("elsewhere.example", "text/html"); body != "404 page not found\n" {
+		t.Fatalf("another name: %q", body)
+	}
+	if _, body := get("nas.lan", "application/json"); body != "404 page not found\n" {
+		t.Fatalf("api: %q", body)
 	}
 }

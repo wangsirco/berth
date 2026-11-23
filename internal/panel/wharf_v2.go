@@ -377,8 +377,14 @@ func (a *App) handleWharfRequest(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, errs.New(409, "wharf.already_paired"))
 		return
 	}
-	var in struct{ Addr string }
+	var in struct {
+		Addr  string
+		Adopt *bool `json:"adopt"`
+	}
 	readJSON(r, &in)
+	if in.Adopt != nil {
+		a.setSetting("access.adopt_on_pair", map[bool]string{true: "1", false: "0"}[*in.Adopt])
+	}
 	u, err := url.Parse(strings.TrimRight(in.Addr, "/"))
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		a.fail(w, r, errs.New(400, "wharf.bad_url"))
@@ -491,4 +497,43 @@ func (a *App) watchWharfAsk(ctx context.Context, q *wharfAsk, actor change.Actor
 			return
 		}
 	}
+}
+
+// findWharf: the router's Wharf, quickly — the default gateway (port 7080, then 443 by the
+// name wharf.lan), known by its certificate. For the Wharf page; the full LAN scan is in
+// Panel links.
+func (a *App) findWharf(ctx context.Context) []found {
+	var out []found
+	seen := map[string]bool{}
+	for gw := range defaultGateways() {
+		if f, ok := probePanel(ctx, gw, "7080"); ok && !seen[f.Addr] {
+			f.Gateway = true
+			seen[f.Addr] = true
+			out = append(out, f)
+		}
+	}
+	for _, name := range []string{"wharf.lan"} { // without a port (Wharf 0.25 "no port" on)
+		if chain, err := wharfapi.Chain(ctx, "https://"+name); err == nil {
+			for _, c := range chain {
+				if strings.Contains(c.Issuer, "Wharf") || strings.Contains(c.Subject, "Wharf") {
+					return []found{{Kind: "wharf", Addr: "https://" + name, Name: "Wharf", Gateway: true}} // its name, not the IP
+				}
+			}
+		}
+	}
+	return out
+}
+
+func init() {
+	routeHooks = append(routeHooks, func(a *App, mux *http.ServeMux) {
+		mux.HandleFunc("POST /api/v1/wharf/find", a.authed("settings.manage", func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+			defer cancel()
+			items := a.findWharf(ctx)
+			if items == nil {
+				items = []found{}
+			}
+			writeJSON(w, 200, map[string]any{"items": items})
+		}))
+	})
 }

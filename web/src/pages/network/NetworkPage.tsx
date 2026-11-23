@@ -18,6 +18,7 @@ import { ConnBadge, type Live as LinkLive } from '../links/LinksPage'
 import { useEvents } from '@/lib/useEvents'
 import { NeedsExtension, useBuiltin } from '../extensions/Builtin'
 import { TabBar } from '@/components/ui/Tabs'
+import { AdoptChoice } from '../wharf/FindWharf'
 
 interface Rule { id: number; action: 'allow' | 'deny'; proto: 'tcp' | 'udp' | 'any'; ports: string; source: 'any' | 'ip' | 'cidr' | 'cloudflare' | 'country'; value: string; except: boolean; comment: string; enabled: boolean }
 interface Listener { proto: string; addr: string; port: number; public: boolean; process?: string; pid?: number }
@@ -714,6 +715,7 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
   // LAN or internet: which pair of names the link uses (found by LAN discovery: the LAN)
   const [mode, setMode] = useState<'lan' | 'public'>(() => new URLSearchParams(location.search).get('mode') === 'public' ? 'public' : 'lan')
   const where = useApi<{ public_name: string; lan_name: string }>('/api/v1/access/where')
+  const [adopt, setAdopt] = useState(true)
   const [chain, setChain] = useState<{ subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] | null>(null)
   const [fp, setFp] = useState('')
   const [err, setErr] = useState('')
@@ -728,7 +730,7 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
     } catch (e) { setErr(errText(e)) }
   }
   const go = async () => {
-    try { const r = await post<{ redirect: string }>('/api/v1/wharf/pair/start', { url: full, fp, mode }); location.href = r.redirect } catch (e) { setErr(errText(e)) }
+    try { const r = await post<{ redirect: string }>('/api/v1/wharf/pair/start', { url: full, fp, mode, adopt }); location.href = r.redirect } catch (e) { setErr(errText(e)) }
   }
   if (user?.role !== 'super') return <Notice>{t('wharf.super_only')}</Notice>
   const body = (
@@ -763,6 +765,7 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
               ))}
             </>}
           <p className="text-[12px] text-mute">{t('wharf.our_fp')} <span className="num break-all">{berthFP}</span></p>
+          {mode === 'lan' && <AdoptChoice adopt={adopt} setAdopt={setAdopt} />}
           <Button variant="primary" disabled={!fp} onClick={go}>{t('wharf.go_approve')}</Button>
         </>}
       </div>
