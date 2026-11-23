@@ -2,6 +2,17 @@
 
 简体中文在前，English below each version.
 
+## 1.6.6 · 2026-11-24
+
+**经隧道访问的判断更严格**
+- 隧道名字上关掉安全入口时，只有真正经 cloudflared 进来的访问才免安全入口。cloudflared 在网站入口自己的 Docker 网络里，以前只看来源是不是内网地址，局域网里的设备直接把隧道名字发到 443 也会被当成「经隧道来」；现在只认那个网络。
+- 开邮箱验证时，先建面板接口的放行规则，再建邮箱验证，中间不会有一刻把 Wharf 和互联面板挡在外面；邮箱验证建失败时，放行规则一起撤回。
+
+---
+
+- With the security entry off on the tunnel name, only requests from cloudflared's own network (the edge's Docker network) skip it; a LAN device sending the tunnel's name straight to 443 no longer does.
+- The bypass for the panel APIs is created before the Access app (no moment where peers are locked out) and removed again if the Access app fails.
+
 ## 1.6.5 · 2026-11-24
 
 **开了邮箱验证（Cloudflare Access），面板之间照样能连**

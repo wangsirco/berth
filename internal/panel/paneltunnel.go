@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wangsirco/berth/internal/agent/caddy"
@@ -62,7 +63,44 @@ func (a *App) viaTunnel(r *http.Request) bool {
 		return false
 	}
 	peer := net.ParseIP(r.Header.Get("X-Berth-Peer"))
-	return peer != nil && (privateIP(peer) || peer.IsLoopback())
+	if peer == nil {
+		return false
+	}
+	// cloudflared sits on the edge's own network: a device on the LAN sending the tunnel's
+	// name straight to 443 is not "through the tunnel"
+	for _, n := range a.edgeNets() {
+		if n.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+var edgeNetCache struct {
+	sync.Mutex
+	nets []*net.IPNet
+	at   time.Time
+}
+
+// edgeNets: the subnets of the edge's network on this machine (asked of the agent, kept 5 minutes)
+func (a *App) edgeNets() []*net.IPNet {
+	edgeNetCache.Lock()
+	defer edgeNetCache.Unlock()
+	if edgeNetCache.nets != nil && time.Since(edgeNetCache.at) < 5*time.Minute {
+		return edgeNetCache.nets
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var out []*net.IPNet
+	for _, s := range a.edgeSubnets(ctx, "local") {
+		if _, n, err := net.ParseCIDR(s); err == nil {
+			out = append(out, n)
+		}
+	}
+	if len(out) > 0 {
+		edgeNetCache.nets, edgeNetCache.at = out, time.Now()
+	}
+	return out
 }
 
 func (a *App) clearPanelTunnel() {
@@ -190,6 +228,10 @@ func init() {
 			a.setSetting("access.tunnel_entry", entry)
 			if len(p.Emails) > 0 && a.setting("access.tunnel_access") == "" {
 				env.Log("::step 3 access")
+				// the panel APIs let through first: no moment where other panels are locked out
+				if err := a.createTunnelBypass(env.Ctx, t.Integration, p.Hostname); err != nil {
+					return nil, nil, err
+				}
 				var n int
 				a.db.QueryRow(`SELECT COUNT(*) FROM cf_access WHERE domain=?`, p.Hostname).Scan(&n)
 				if n == 0 {
@@ -199,15 +241,13 @@ func init() {
 					}
 					app, err := cf.CreateAccessApp(env.Ctx, acc, p.Hostname, dns.AccessPolicy{Emails: p.Emails})
 					if err != nil {
+						a.dropTunnelBypass(env.Ctx)
 						return nil, nil, dnsErr(err)
 					}
 					c := cfAccess{Domain: p.Hostname, Integration: t.Integration, Account: acc, AppID: app.ID, Emails: p.Emails, CreatedAt: time.Now().Unix()}
 					s, _ := json.Marshal(c)
 					a.db.Exec(`INSERT INTO cf_access(domain, spec) VALUES(?,?)`, p.Hostname, string(s))
 					a.setSetting("access.tunnel_access", p.Hostname)
-				}
-				if err := a.ensureTunnelBypass(env.Ctx); err != nil {
-					return nil, nil, err
 				}
 			}
 			env.Log("::step 4 edge")
@@ -267,10 +307,18 @@ var bypassPaths = []string{"/api/ext/wharf", "/link-api", "/join", "/api/v1/agen
 // Access (made with the Access app; added later for tunnels made before this existed)
 func (a *App) ensureTunnelBypass(ctx context.Context) error {
 	host := a.setting("access.tunnel_access")
-	if host == "" || a.setting("access.tunnel_bypass") != "" {
+	if host == "" {
 		return nil
 	}
-	cf, err := a.cloudflare(a.setting("access.tunnel_dns"))
+	return a.createTunnelBypass(ctx, a.setting("access.tunnel_dns"), host)
+}
+
+func (a *App) createTunnelBypass(ctx context.Context, integration, host string) error {
+	if a.setting("access.tunnel_bypass") != "" {
+		return nil
+	}
+	a.setSetting("access.tunnel_dns", integration)
+	cf, err := a.cloudflare(integration)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"net/http/httptest"
 
@@ -81,7 +82,12 @@ func TestPanelThroughTunnel(t *testing.T) {
 		t.Fatalf("certificate by DNS challenge: %+v", e)
 	}
 
-	// who counts as coming through the tunnel
+	// who counts as coming through the tunnel: only the edge's own network (cloudflared)
+	_, edge, _ := net.ParseCIDR("172.19.0.0/16")
+	edgeNetCache.Lock()
+	edgeNetCache.nets, edgeNetCache.at = []*net.IPNet{edge}, time.Now()
+	edgeNetCache.Unlock()
+	t.Cleanup(func() { edgeNetCache.Lock(); edgeNetCache.nets = nil; edgeNetCache.Unlock() })
 	req := func(host, peer string, edge bool) bool {
 		r := httptest.NewRequest("GET", "https://"+host+"/", nil)
 		r.RemoteAddr = "127.0.0.1:5000"
@@ -95,7 +101,7 @@ func TestPanelThroughTunnel(t *testing.T) {
 	if !req("panel.example.com", "172.19.0.5", true) {
 		t.Fatal("tunnel visitor refused")
 	}
-	if req("panel.example.com", "198.51.100.4", true) || req("panel.example.com", "172.19.0.5", false) || req("other.example.com", "172.19.0.5", true) {
+	if req("panel.example.com", "198.51.100.4", true) || req("panel.example.com", "10.0.2.50", true) || req("panel.example.com", "172.19.0.5", false) || req("other.example.com", "172.19.0.5", true) {
 		t.Fatal("non-tunnel visitor allowed")
 	}
 
