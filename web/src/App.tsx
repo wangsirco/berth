@@ -39,7 +39,6 @@ const Databases = lazy(() => import('./pages/db/DatabasesPage'))
 const Backup = lazy(() => import('./pages/backup/BackupPage'))
 const Monitor = lazy(() => import('./pages/monitor/MonitorPage'))
 const Network = lazy(() => import('./pages/network/NetworkPage'))
-const WharfPaired = lazy(() => import('./pages/network/WharfPaired'))
 const Vms = lazy(() => import('./pages/vms/VmsPage'))
 const Dev = lazy(() => import('./pages/dev/DevPage'))
 const Remote = lazy(() => import('./pages/remote/RemotePage'))
@@ -72,7 +71,6 @@ export default function App() {
         <Route path="/vm-screen/:host/:name" element={<RequireAuth><VmScreen /></RequireAuth>} />
         <Route path="/pve-screen/:cluster/:node/:type/:vmid" element={<RequireAuth><PveScreen /></RequireAuth>} />
         <Route path="/term/:host/:id" element={<RequireAuth><TermWindow /></RequireAuth>} />
-        <Route path="/wharf/paired" element={<RequireAuth><WharfPaired /></RequireAuth>} />
         <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
         <Route path="/wall" element={<RequireAuth><Wall /></RequireAuth>} />
         <Route path="/screen" element={<RequireAuth><Screen /></RequireAuth>} />

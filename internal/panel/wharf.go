@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,17 +37,25 @@ type wharfLink struct {
 	PairedAt      int64    `json:"paired_at"`
 	LastSeen      int64    `json:"last_seen,omitempty"`
 	ExpiresAt     int64    `json:"expires_at,omitempty"`
-	State         string   `json:"state"` // active | broken
+	State         string   `json:"state"`          // active | broken
+	Protocol      int      `json:"protocol"`       // Wharf's (2: signs without the token)
+	KeyAuth       bool     `json:"key_auth"`       // Berth signs with X-Berth-Key
+	WharfKeyAuth  bool     `json:"wharf_key_auth"` // Wharf signs with X-Wharf-Key
+	DNSName       string   `json:"dns_name,omitempty"`
 	token         string
 	inboundHash   string
+	inbound       string // Wharf's token for Berth: known since pairing (or Wharf's first v1 call)
 }
 
 func (a *App) wharf() (*wharfLink, error) {
 	var l wharfLink
 	var enc []byte
+	var inEnc []byte
 	var scopes, targets string
-	err := a.db.QueryRow(`SELECT url, name, fp, token_enc, inbound_hash, scopes, target_ips, alerts_primary, paired_at, last_seen, expires_at, state FROM wharf_link WHERE id=1`).
-		Scan(&l.URL, &l.Name, &l.FP, &enc, &l.inboundHash, &scopes, &targets, &l.AlertsPrimary, &l.PairedAt, &l.LastSeen, &l.ExpiresAt, &l.State)
+	err := a.db.QueryRow(`SELECT url, name, fp, token_enc, inbound_hash, scopes, target_ips, alerts_primary, paired_at, last_seen, expires_at, state,
+		inbound_enc, protocol, wharf_key_auth, dns_name FROM wharf_link WHERE id=1`).
+		Scan(&l.URL, &l.Name, &l.FP, &enc, &l.inboundHash, &scopes, &targets, &l.AlertsPrimary, &l.PairedAt, &l.LastSeen, &l.ExpiresAt, &l.State,
+			&inEnc, &l.Protocol, &l.WharfKeyAuth, &l.DNSName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errs.New(409, "wharf.not_paired")
 	}
@@ -60,7 +69,21 @@ func (a *App) wharf() (*wharfLink, error) {
 		return nil, err
 	}
 	l.token = string(tok)
+	if len(inEnc) > 0 {
+		if b, err := a.open(inEnc); err == nil {
+			l.inbound = string(b)
+		}
+	}
+	// v2 both ways only when Berth can check X-Wharf-Key (it needs Wharf's token to verify)
+	l.KeyAuth = l.Protocol >= 2 && l.inbound != ""
 	return &l, nil
+}
+
+// api: a client for this link (v2 key ids when both sides can)
+func (l *wharfLink) api() *wharfapi.Client {
+	c := wharfapi.New(l.URL, l.FP, l.token)
+	c.KeyAuth = l.KeyAuth
+	return c
 }
 
 func (l *wharfLink) has(scope string) bool { return contains(l.Scopes, scope) }
@@ -74,7 +97,7 @@ func (a *App) wharfClient(scope string) (*wharfapi.Client, *wharfLink, error) {
 	if scope != "" && !l.has(scope) {
 		return nil, nil, errs.New(403, "wharf.no_scope", "scope", scope)
 	}
-	return wharfapi.New(l.URL, l.FP, l.token), l, nil
+	return l.api(), l, nil
 }
 
 // wharfErr turns a Wharf answer into something translatable (Wharf already speaks Chinese).
@@ -120,9 +143,19 @@ func (a *App) wharfAuth(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	if err != nil {
 		return deny()
 	}
-	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !strings.HasPrefix(tok, "berth_wrf_") || subtle.ConstantTimeCompare([]byte(hashToken(tok)), []byte(l.inboundHash)) != 1 {
-		return deny()
+	// v2: X-Wharf-Key names the token, which never travels; v1: the token itself
+	var tok string
+	kid := strings.ToLower(r.Header.Get("X-Wharf-Key"))
+	if kid != "" {
+		if l.inbound == "" || len(kid) != 16 || len(l.inboundHash) < 16 || subtle.ConstantTimeCompare([]byte(kid), []byte(l.inboundHash[:16])) != 1 {
+			return deny()
+		}
+		tok = l.inbound
+	} else {
+		tok = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !strings.HasPrefix(tok, "berth_wrf_") || subtle.ConstantTimeCompare([]byte(hashToken(tok)), []byte(l.inboundHash)) != 1 {
+			return deny()
+		}
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	nonce, err := sign.CheckPrefixed(r, "X-Wharf", sign.DeriveKey(tok), body)
@@ -134,6 +167,14 @@ func (a *App) wharfAuth(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		return deny() // replayed
 	}
 	a.db.Exec(`UPDATE wharf_link SET last_seen=?, state='active' WHERE id=1`, time.Now().Unix())
+	if kid != "" && !l.WharfKeyAuth {
+		a.db.Exec(`UPDATE wharf_link SET wharf_key_auth=1 WHERE id=1`)
+	}
+	if kid == "" && l.inbound == "" { // paired before v2: keep the token (sealed) so key ids can be checked later
+		if enc, err := a.seal([]byte(tok)); err == nil {
+			a.db.Exec(`UPDATE wharf_link SET inbound_enc=? WHERE id=1`, enc)
+		}
+	}
 	return body, true
 }
 
@@ -144,6 +185,7 @@ func init() {
 		// ---- people (settings) ----
 		mux.HandleFunc("GET /api/v1/wharf", a.authed("", func(w http.ResponseWriter, r *http.Request) {
 			out := map[string]any{"paired": false, "berth_fp": a.caFP()}
+			a.wharfRefresh(r.Context(), false) // Wharf's protocol (v2: no tokens on the wire)
 			if l, err := a.wharf(); err == nil {
 				out["paired"], out["link"] = true, l
 				out["live"] = a.wharfLive(r.Context(), l.URL, l.FP) // LAN or internet, latency, where it is
@@ -190,10 +232,16 @@ func init() {
 				return
 			}
 			code := sign.RandomHex(16)
-			p, _ := json.Marshal(map[string]any{"url": u.String(), "fp": strings.ToLower(in.FP), "code": code, "at": time.Now().Unix()})
+			// where Wharf (on the router) calls back: an address it surely reaches, not the name
+			// the browser happened to use (mini.local needs mDNS, which routers seldom answer)
+			base := firstNonEmpty(a.panelURL("panel.lan_host"), a.urlToward(u.Hostname()), a.publicURL(), panelBase(r))
+			me := currentUser(r)
+			p, _ := json.Marshal(map[string]any{"url": u.String(), "fp": strings.ToLower(in.FP), "code": code, "at": time.Now().Unix(),
+				"base": base, "origin": panelBase(r), "uid": me.ID, "user": me.Username})
 			a.setSetting("wharf.pending", string(p))
-			base := firstNonEmpty(a.publicURL(), panelBase(r))
-			q := url.Values{"berth_url": {base}, "berth_fp": {a.caFP()}, "code": {code}, "cb": {base + "/wharf/paired"}}
+			// berth_urls: every address to try, the LAN first (a Wharf that knows it falls back
+			// to a public one; older ones read berth_url alone)
+			q := url.Values{"berth_url": {base}, "berth_urls": {strings.Join(a.ourAddrs(r, base), ",")}, "berth_fp": {a.caFP()}, "code": {code}, "cb": {base + "/wharf/paired"}} // same host as berth_url (Wharf checks); Berth finishes there and sends the browser home
 			writeJSON(w, 200, map[string]string{"redirect": u.String() + "/pair/berth?" + q.Encode()})
 		}))
 		// 3. back from Wharf: trade the code for the token (and hand Wharf ours)
@@ -202,40 +250,35 @@ func init() {
 				a.fail(w, r, errs.New(403, "auth.forbidden"))
 				return
 			}
-			var in struct{ Code string }
+			var in struct{ Code, State string }
 			readJSON(r, &in)
-			var pend struct {
-				URL, FP, Code string
-				At            int64
-			}
-			json.Unmarshal([]byte(a.setting("wharf.pending")), &pend)
-			if pend.Code == "" || subtle.ConstantTimeCompare([]byte(pend.Code), []byte(in.Code)) != 1 || time.Since(time.Unix(pend.At, 0)) > 15*time.Minute {
-				a.fail(w, r, errs.New(400, "wharf.bad_code"))
-				return
-			}
-			a.setSetting("wharf.pending", "")
-			inbound := "berth_wrf_" + sign.RandomHex(24)
-			name := firstNonEmpty(a.setting("panel.name"), "Berth")
-			res, err := wharfapi.Exchange(r.Context(), pend.URL, pend.FP, wharfapi.ExchangeRequest{Code: in.Code, BerthToken: inbound, BerthName: name,
-				BerthURL: firstNonEmpty(a.publicURL(), panelBase(r)), BerthFP: a.caFP()})
-			if err != nil {
-				a.fail(w, r, a.wharfErr(err))
-				return
-			}
-			enc, err := a.seal([]byte(res.Token))
+			res, err := a.finishWharfPair(r.Context(), firstNonEmpty(in.State, in.Code), in.Code, currentActor(r), panelBase(r))
 			if err != nil {
 				a.fail(w, r, err)
 				return
 			}
-			scopes, _ := json.Marshal(res.Scopes)
-			targets, _ := json.Marshal(res.TargetIPs)
-			now := time.Now().Unix()
-			a.db.Exec(`INSERT OR REPLACE INTO wharf_link(id, url, name, fp, token_enc, inbound_hash, scopes, target_ips, alerts_primary, paired_at, last_seen, expires_at, state)
-				VALUES(1,?,?,?,?,?,?,?,'',?,?,?,'active')`, pend.URL, res.WharfName, pend.FP, enc, hashToken(inbound), string(scopes), string(targets), now, now, res.ExpiresAt)
-			a.pipe.Record(currentActor(r), "local", "wharf.pair", map[string]any{"url": pend.URL, "scopes": res.Scopes}, change.Plan{
-				Summary: "plan.wharf.pair", SummaryP: map[string]any{"name": res.WharfName, "url": pend.URL}, Risk: change.RiskMedium})
 			writeJSON(w, 200, map[string]any{"name": res.WharfName, "scopes": res.Scopes})
 		}))
+		// Wharf sends the browser back here (cb, on the address Wharf reaches): Berth finishes the
+		// pairing itself — the state is the one-time code it handed out minutes ago, the code
+		// Wharf's — and sends the browser back to where it was signed in
+		mux.HandleFunc("GET /wharf/paired", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			pend := a.wharfPending()
+			home := firstNonEmpty(pend.Origin, panelBase(r))
+			state := firstNonEmpty(q.Get("state"), q.Get("code")) // Wharf hands back the same code; newer ones add state
+			if pend.Code == "" || state == "" {
+				http.Redirect(w, r, home+"/local/wharf?paired=error", http.StatusFound)
+				return
+			}
+			actor := change.Actor{Type: "user", ID: strconv.FormatInt(pend.UID, 10), Name: pend.User, Via: "ui", IP: a.clientIP(r)}
+			res, err := a.finishWharfPair(r.Context(), state, q.Get("code"), actor, "")
+			if err != nil {
+				http.Redirect(w, r, home+"/local/wharf?paired=error&reason="+url.QueryEscape(errs.From(err).Code), http.StatusFound)
+				return
+			}
+			http.Redirect(w, r, home+"/local/wharf?paired="+url.QueryEscape(res.WharfName), http.StatusFound)
+		})
 		mux.HandleFunc("PUT /api/v1/wharf/users", a.authed("users.manage", func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				WharfUser string `json:"wharf_user"`
@@ -491,4 +534,72 @@ func (a *App) wharfInHost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"name": firstNonEmpty(a.setting("panel.name"), "Berth"), "containers": cs, "sites": sites, "vms": []any{}})
+}
+
+// urlToward: this panel at the LAN address it uses to reach host (the router, for Wharf).
+// A public name of the router resolves to its WAN address; the way there still leaves by the
+// LAN card, so this is the address the router sees and can call back.
+func (a *App) urlToward(host string) string {
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return ""
+	}
+	c, err := net.Dial("udp", net.JoinHostPort(ips[0].String(), "443")) // no packet is sent
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	ip := c.LocalAddr().(*net.UDPAddr).IP
+	if ip == nil || ip.IsLoopback() || routeOf(ip) == "public" {
+		return ""
+	}
+	return "https://" + net.JoinHostPort(ip.String(), a.panelPort())
+}
+
+type wharfPend struct {
+	URL, FP, Code, Base, Origin, User string
+	At, UID                           int64
+}
+
+func (a *App) wharfPending() wharfPend {
+	var p wharfPend
+	json.Unmarshal([]byte(a.setting("wharf.pending")), &p)
+	return p
+}
+
+// finishWharfPair: state must be the one-time code this panel handed out (within 15 minutes);
+// code is Wharf's, traded for the token. Berth gives Wharf the address it reaches Berth at.
+func (a *App) finishWharfPair(ctx context.Context, state, code string, actor change.Actor, fallbackBase string) (wharfapi.ExchangeResult, error) {
+	pend := a.wharfPending()
+	if pend.Code == "" || subtle.ConstantTimeCompare([]byte(pend.Code), []byte(state)) != 1 || time.Since(time.Unix(pend.At, 0)) > 15*time.Minute {
+		return wharfapi.ExchangeResult{}, errs.New(400, "wharf.bad_code")
+	}
+	a.setSetting("wharf.pending", "")
+	return a.completeWharfPair(ctx, pend.URL, pend.FP, firstNonEmpty(pend.Base, a.publicURL(), fallbackBase), code, actor)
+}
+
+// completeWharfPair trades Wharf's one-time code for its token and hands Wharf Berth's own
+// (kept sealed too: with protocol v2 Wharf names it by key id and Berth verifies with it).
+func (a *App) completeWharfPair(ctx context.Context, wharfURL, fp, berthURL, code string, actor change.Actor) (wharfapi.ExchangeResult, error) {
+	inbound := "berth_wrf_" + sign.RandomHex(24)
+	name := firstNonEmpty(a.setting("panel.name"), "Berth")
+	res, err := wharfapi.Exchange(ctx, wharfURL, fp, wharfapi.ExchangeRequest{Code: code, BerthToken: inbound, BerthName: name,
+		BerthURL: berthURL, BerthFP: a.caFP()})
+	if err != nil {
+		return res, a.wharfErr(err)
+	}
+	enc, err1 := a.seal([]byte(res.Token))
+	inEnc, err2 := a.seal([]byte(inbound))
+	if err := errors.Join(err1, err2); err != nil {
+		return res, err
+	}
+	scopes, _ := json.Marshal(res.Scopes)
+	targets, _ := json.Marshal(res.TargetIPs)
+	now := time.Now().Unix()
+	a.db.Exec(`INSERT OR REPLACE INTO wharf_link(id, url, name, fp, token_enc, inbound_hash, scopes, target_ips, alerts_primary, paired_at, last_seen, expires_at, state, inbound_enc)
+		VALUES(1,?,?,?,?,?,?,?,'',?,?,?,'active',?)`, wharfURL, res.WharfName, fp, enc, hashToken(inbound), string(scopes), string(targets), now, now, res.ExpiresAt, inEnc)
+	a.pipe.Record(actor, "local", "wharf.pair", map[string]any{"url": wharfURL, "scopes": res.Scopes}, change.Plan{
+		Summary: "plan.wharf.pair", SummaryP: map[string]any{"name": res.WharfName, "url": wharfURL}, Risk: change.RiskMedium})
+	go a.wharfRefresh(context.Background(), true) // learn Wharf's protocol: v2 stops sending tokens
+	return res, nil
 }

@@ -1,5 +1,5 @@
 import { CloudflareWelcome, TokenDialog } from '../cloudflare/Welcome'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Navigate } from 'react-router-dom'
 import { hostPath, useHost } from '@/components/shell/host'
@@ -694,7 +694,7 @@ function ZoneStats({ integ, zone, onClose }: { integ: string; zone: CFZone; onCl
   )
 }
 
-interface WharfLinkInfo { url: string; name: string; fp: string; scopes: string[]; target_ips: string[]; alerts_primary: string; paired_at: number; last_seen?: number; state: string }
+interface WharfLinkInfo { url: string; name: string; fp: string; scopes: string[]; target_ips: string[]; alerts_primary: string; paired_at: number; last_seen?: number; state: string; protocol?: number; key_auth?: boolean; wharf_key_auth?: boolean; dns_name?: string }
 export interface WharfStatus { paired: boolean; berth_fp: string; link?: WharfLinkInfo; live?: LinkLive; user_map?: { wharf_user: string; berth_user: string }[] }
 interface WharfView {
   paired: boolean
@@ -709,17 +709,19 @@ interface WharfView {
 export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }) {
   const t = useT()
   const { user } = useAuth()
-  const [u, setU] = useState('')
+  // a Wharf found by LAN discovery comes in as ?url=…: filled in and checked at once
+  const [u, setU] = useState(() => new URLSearchParams(location.search).get('url') ?? '')
   const [chain, setChain] = useState<{ subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] | null>(null)
   const [fp, setFp] = useState('')
   const [err, setErr] = useState('')
   const full = /^https?:\/\//.test(u) ? u : 'https://' + u
+  useEffect(() => { if (new URLSearchParams(location.search).get('url')) void probe() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const probe = async () => {
     setErr(''); setChain(null)
     try {
       const r = await post<{ chain: { subject: string; issuer: string; ca: boolean; fp: string; public?: boolean }[] }>('/api/v1/wharf/probe', { url: full })
       setChain(r.chain)
-      setFp((r.chain.find((c) => c.ca) ?? r.chain[r.chain.length - 1]).fp)
+      setFp((r.chain[0]?.public ? r.chain[0] : r.chain.find((c) => c.ca) ?? r.chain[r.chain.length - 1]).fp) // a public chain: any of it, the name is what gets checked
     } catch (e) { setErr(errText(e)) }
   }
   const go = async () => {
@@ -733,14 +735,24 @@ export function WharfPair({ berthFP, bare }: { berthFP: string; bare?: boolean }
         <div className="flex gap-2"><Input className="num flex-1" value={u} onChange={(e) => setU(e.target.value.trim())} placeholder="https://192.168.1.1:8443" /><Button disabled={!u} onClick={probe}>{t('wharf.check_cert')}</Button></div>
         {chain && <>
           {chain[0]?.public
-            ? <Notice tone="acc">{t('wharf.public_cert', { issuer: chain[0].issuer })}</Notice>
-            : <p>{t('wharf.pick_fp')}</p>}
-          {chain.map((c) => (
-            <label key={c.fp} className="flex cursor-pointer items-start gap-2 rounded-[var(--radius-box)] border border-line p-2">
-              <input type="radio" checked={fp === c.fp} onChange={() => setFp(c.fp)} className="mt-1" />
-              <div className="min-w-0"><div>{c.subject || '—'} {c.ca && <Pill tone="acc">CA</Pill>}</div><div className="num break-all text-[11.5px] text-mute">{c.fp}</div></div>
-            </label>
-          ))}
+            ? <>
+              {/* a public name: checked by the name, nothing to compare by hand */}
+              <Notice tone="acc">{t('wharf.public_cert', { issuer: chain[0].issuer })}</Notice>
+              <p className="text-[12.5px] text-mute">{t('wharf.public_fp_note')}</p>
+              <details className="text-[12px]">
+                <summary className="cursor-pointer text-mute">{t('wharf.chain_details')}</summary>
+                <div className="mt-1 space-y-1">{chain.map((c) => <div key={c.fp} className="rounded border border-line p-2"><div>{c.subject || '—'} {c.ca && <Pill tone="acc">CA</Pill>} <span className="text-mute">← {c.issuer}</span></div><div className="num break-all text-[11px] text-mute">{c.fp}</div></div>)}</div>
+              </details>
+            </>
+            : <>
+              <p>{t('wharf.pick_fp')}</p>
+              {chain.map((c) => (
+                <label key={c.fp} className="flex cursor-pointer items-start gap-2 rounded-[var(--radius-box)] border border-line p-2">
+                  <input type="radio" checked={fp === c.fp} onChange={() => setFp(c.fp)} className="mt-1" />
+                  <div className="min-w-0"><div>{c.subject || '—'} {c.ca && <Pill tone="acc">CA</Pill>}</div><div className="num break-all text-[11.5px] text-mute">{c.fp}</div></div>
+                </label>
+              ))}
+            </>}
           <p className="text-[12px] text-mute">{t('wharf.our_fp')} <span className="num break-all">{berthFP}</span></p>
           <Button variant="primary" disabled={!fp} onClick={go}>{t('wharf.go_approve')}</Button>
         </>}

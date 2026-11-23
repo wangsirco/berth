@@ -142,6 +142,7 @@ func (a *App) wharfBanSweep(ctx context.Context) {
 	if _, err := a.wharf(); err != nil {
 		return
 	}
+	a.wharfRefresh(ctx, false)
 	now := time.Now().Unix()
 	ids := func(q string, args ...any) []int64 {
 		var out []int64
@@ -177,7 +178,7 @@ func (a *App) sendToWharf(ev alertEvent) bool {
 	title, body := a.eventText(ev, "zh-CN")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	err = wharfapi.New(l.URL, l.FP, l.token).Alert(ctx, wharfapi.Alert{Level: ev.Severity, Title: "[Berth · " + firstNonEmpty(a.setting("panel.name"), "Berth") + "] " + title,
+	err = l.api().Alert(ctx, wharfapi.Alert{Level: ev.Severity, Title: "[Berth · " + firstNonEmpty(a.setting("panel.name"), "Berth") + "] " + title,
 		Body: body, Link: a.publicURL() + "/" + firstNonEmpty(ev.Host, "local") + "/monitor", DedupeKey: ev.Key + ":" + ev.State})
 	return err == nil
 }
@@ -394,7 +395,7 @@ func init() {
 			if err != nil {
 				return nil, nil, err
 			}
-			c := wharfapi.New(l.URL, l.FP, l.token)
+			c := l.api()
 			if !p.Keep {
 				for _, h := range append([]string{"local"}, a.remoteHostNames()...) {
 					for _, x := range a.wharfPublished(h) {

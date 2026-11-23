@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -128,7 +129,16 @@ func Exchange(ctx context.Context, base, fp string, in ExchangeRequest) (Exchang
 type Client struct {
 	Base  string
 	Token string
-	hc    *http.Client
+	// KeyAuth (protocol v2): name the token by its key id (X-Berth-Key) instead of sending it;
+	// set once Wharf says it speaks v2 and Berth can take X-Wharf-Key back
+	KeyAuth bool
+	hc      *http.Client
+}
+
+// KeyID names a pairing token without revealing it (X-Berth-Key / X-Wharf-Key).
+func KeyID(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])[:16]
 }
 
 func New(base, fp, token string) *Client {
@@ -147,7 +157,11 @@ func (c *Client) Do(ctx context.Context, method, path, actor string, in, out any
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.KeyAuth {
+		req.Header.Set("X-Berth-Key", KeyID(c.Token))
+	} else {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	if actor != "" {
 		req.Header.Set("X-Berth-Actor", url.QueryEscape(actor))
 	}
@@ -321,5 +335,98 @@ func (c *Client) Ticket(ctx context.Context, berthUser, returnTo string) (string
 // Unpair tells Wharf the link is gone; keep says whether Berth-made forwards stay (as
 // ordinary forwards) or are deleted.
 func (c *Client) Unpair(ctx context.Context, keep bool) error {
-	return c.Do(ctx, "DELETE", "/pair?keep="+fmt.Sprint(keep), "", nil, nil)
+	err := c.Do(ctx, "POST", "/unpair", "", map[string]bool{"keep": keep}, nil)
+	if IsStatus(err, 404) || IsStatus(err, 405) { // early Wharf builds
+		err = c.Do(ctx, "DELETE", "/pair?keep="+fmt.Sprint(keep), "", nil, nil)
+	}
+	return err
+}
+
+// ---- protocol v2 ----
+
+// PingResult is Wharf's answer to GET /ping; Protocol 2 and up takes X-Berth-Key.
+type PingResult struct {
+	OK       bool     `json:"ok"`
+	Name     string   `json:"name"`
+	Version  string   `json:"version"`
+	Scopes   []string `json:"scopes"`
+	Protocol int      `json:"protocol"`
+	KeyAuth  bool     `json:"key_auth"`
+}
+
+func (c *Client) Ping(ctx context.Context) (PingResult, error) {
+	var out PingResult
+	return out, c.Do(ctx, "GET", "/ping", "", nil, &out)
+}
+
+// PairRequest asks a Wharf found on the LAN to be paired (its admin allows it there); not signed.
+type PairRequest struct {
+	Code      string   `json:"code"`
+	BerthName string   `json:"berth_name"`
+	BerthURLs []string `json:"berth_urls"`
+	BerthFP   string   `json:"berth_fp"`
+	WharfFP   string   `json:"wharf_fp"`
+}
+
+type PairAsk struct {
+	ID        string `json:"id"`
+	SAS       string `json:"sas"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// PairAskState: waiting | refused | allowed (then Code is Wharf's one-time code for Exchange).
+type PairAskState struct {
+	State    string `json:"state"`
+	Code     string `json:"code,omitempty"`
+	WharfURL string `json:"wharf_url,omitempty"`
+}
+
+func plain(ctx context.Context, base, fp, path string, in, out any) error {
+	b, _ := json.Marshal(in)
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(base, "/")+Prefix+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return finish(httpClient(fp), req, out)
+}
+
+func RequestPair(ctx context.Context, base, fp string, in PairRequest) (PairAsk, error) {
+	var out PairAsk
+	return out, plain(ctx, base, fp, "/pair/request", in, &out)
+}
+
+func RequestStatus(ctx context.Context, base, fp, code string) (PairAskState, error) {
+	var out PairAskState
+	return out, plain(ctx, base, fp, "/pair/request/status", map[string]string{"code": code}, &out)
+}
+
+// SAS: the six digits both panels show for a LAN request (Wharf computes the same).
+func SAS(code, berthFP, wharfFP string) string {
+	h := sha256.Sum256([]byte("berth-wharf-sas" + code + berthFP + wharfFP))
+	return fmt.Sprintf("%03d %03d", binary.BigEndian.Uint32(h[0:4])%1000, binary.BigEndian.Uint32(h[4:8])%1000)
+}
+
+// DNSNames: names Berth registered on the router's DNS (scope dns).
+type DNSNames struct {
+	Items    []struct{ Name, IP string } `json:"items"`
+	Suffixes []string                    `json:"suffixes"`
+	Max      int                         `json:"max"`
+}
+
+func (c *Client) DNSNames(ctx context.Context) (DNSNames, error) {
+	var out DNSNames
+	return out, c.Do(ctx, "GET", "/dns/names", "", nil, &out)
+}
+
+func (c *Client) SetDNSName(ctx context.Context, actor, name, ip string) error {
+	return c.Do(ctx, "PUT", "/dns/names/"+url.PathEscape(name), actor, map[string]string{"ip": ip}, nil)
+}
+
+func (c *Client) DeleteDNSName(ctx context.Context, actor, name string) error {
+	err := c.Do(ctx, "DELETE", "/dns/names/"+url.PathEscape(name), actor, nil, nil)
+	if IsStatus(err, 404) {
+		return nil
+	}
+	return err
 }

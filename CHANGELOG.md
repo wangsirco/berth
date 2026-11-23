@@ -2,6 +2,66 @@
 
 简体中文在前，English below each version.
 
+## 1.5.0 · 2026-11-23
+
+**内网发现：像连蓝牙一样绑定**
+- 「面板互联」页新增「内网发现」：扫描本机所在的局域网，列出开放了发现的 Berth 面板，以及路由器上的 Wharf（按证书认出）。
+- **绑定另一台 Berth 面板**：
+  - 对方点「让别人发现我」，开放 10 分钟。默认关闭，只回答局域网里的请求。
+  - 这边点「申请管理它」，对方页面顶部会弹出申请。对方点「查看并允许」，选好交出哪些服务器，就完成了，这边自动确认。
+- **绑定路由器的 Wharf**（需要 Wharf 0.24.0 及以上）：
+  - 先在 Wharf 的「Berth 服务器面板」页点「允许 Berth 申请绑定（10 分钟）」，再在 Berth 里点「申请绑定」。
+  - 两边会显示同一个 6 位校验码，一样再在 Wharf 里点「允许」。Berth 会自动完成配对，不用来回跳转页面。
+  - 校验码由两边各自算出：中间要是有人换了证书，两边的数字就对不上，Berth 会直接停止申请。
+- 跨网的情况仍然用配对码（面板之间）或填地址配对（Wharf）。
+
+**本地域名与 Passkey**
+- Passkey（指纹 / 面容登录）不能在 IP 地址上用。新增引导，四步设好：
+  1. **起个名字**：默认用「主机名.local」，也可以自己取。
+  2. **让设备找得到它**：`.local` 名字由服务器在局域网里广播（mDNS），需要时自动装好 avahi 并放行防火墙，执行前先给你预览。
+  3. **让这台设备信任面板证书**：按 Mac、iPhone / iPad、Windows、安卓、Linux 分别给出步骤，Firefox 单独说明。
+  4. **检查后用新名字打开**：检查通过后，直接带着安全入口用新名字打开面板。
+- 已和 Wharf 配对时，可以直接选「主机名.lan」：保存时会自动在路由器上登记，局域网里所有设备都能解析这个名字，包括不支持 `.local` 的设备。换名字或清空时，路由器上的旧记录会一起删掉；解除配对时，路由器会把这些记录清理掉。
+- 新装面板的欢迎向导里多了可以跳过的一步「本地域名」；在「设置」和 Passkey 卡片里也能随时打开这个引导。
+- 名字会签进面板证书。这项设置可以预览，也可以撤销。
+
+**Wharf 对接升级（协议 v2，配合 Wharf 0.24.0）**
+- **签名不带令牌**：两边都升级后，请求里只带令牌的标识，令牌本身不再出现在网上。即使经 Cloudflare 等代理，代理也看不到它。自动切换，不用重新配对；Wharf 页会显示「签名不带令牌」。
+- **配对更稳**：
+  - Berth 把自己的多个地址一起交给 Wharf，内网地址优先。Wharf 连不上其中一个时，会自动换下一个。
+  - 配对结束后的回跳由 Berth 自己完成，不再依赖浏览器里的登录状态，也不需要再输入安全入口。
+- **补齐 Wharf 会调用的接口**：
+  - 互联状态测速（ping）；
+  - 令牌轮换；
+  - Wharf 收窄权限或改主机后同步过来；
+  - 在 Wharf 里撤销封禁后同步过来；
+  - Wharf 设备页里的「Berth」标签页（这台主机的网站和容器）；
+  - DDNS 列表。
+- **修复**：
+  - 在 Berth 里解除和 Wharf 的配对时，Wharf 那边没有收到通知；
+  - 用公网域名配对 Wharf 时，说明里让人比对对不上的指纹。
+
+**其他**
+- 公开仓库只发布图标、截图和插件开发指南，开发中的方案和交接文档不再公开。
+
+---
+
+- **LAN discovery**, Bluetooth-style:
+  - Find Berth panels that opened discovery (10 minutes, LAN only) and the router's Wharf.
+  - Ask to manage a panel; it allows at the top of its page.
+  - Ask Wharf (0.24.0+) to pair: both show the same six-digit check code, and Berth finishes the pairing on its own once Wharf's admin allows.
+- **Local name and Passkey guide**:
+  - pick a name: `hostname.local` via mDNS (avahi installed and the firewall opened when needed), or `hostname.lan` registered on the router through Wharf;
+  - trust the panel certificate, with steps for each OS;
+  - check the name, then open the panel by it.
+  - Available in the setup wizard and in Settings.
+- **Wharf protocol v2**:
+  - Requests are signed with a key id, so the token never travels.
+  - Berth hands Wharf several addresses, LAN first.
+  - The pairing callback is finished server-side.
+  - Berth now serves ping, rotate, events, hosts and DDNS for Wharf.
+  - Fix: unpairing from Berth now tells Wharf.
+
 ## 1.4.0 · 2026-11-23
 
 **面板互联：两台都装了 Berth 面板的服务器，交给一个主面板统一管理**

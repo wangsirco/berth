@@ -47,6 +47,12 @@ func TestWharfLink(t *testing.T) {
 	_, st := c.do("POST", "/api/v1/wharf/pair/start", map[string]string{"url": wf.URL, "fp": wf.FP})
 	red, _ := url.Parse(st["redirect"].(string))
 	code := red.Query().Get("code")
+	if cb, bu := red.Query().Get("cb"), red.Query().Get("berth_url"); !strings.HasPrefix(cb, bu+"/") { // Wharf requires the same host and port
+		t.Fatalf("callback %s is not on berth_url %s", cb, bu)
+	}
+	if !strings.Contains(red.Query().Get("berth_urls"), red.Query().Get("berth_url")) {
+		t.Fatalf("berth_urls: %v", red.Query())
+	}
 	if !strings.HasPrefix(st["redirect"].(string), wf.URL+"/pair/berth?") || red.Query().Get("berth_fp") != c.app.caFP() || code == "" {
 		t.Fatalf("redirect: %v", st)
 	}
@@ -54,8 +60,16 @@ func TestWharfLink(t *testing.T) {
 	if r, _ := c.do("POST", "/api/v1/wharf/pair/finish", map[string]string{"code": "wrong"}); r.StatusCode != 400 {
 		t.Fatal("wrong code accepted")
 	}
-	if r, out := c.do("POST", "/api/v1/wharf/pair/finish", map[string]string{"code": code}); r.StatusCode != 200 {
-		t.Fatalf("finish: %v", out)
+	// Wharf sends the browser back to cb: a browser with no session there (another address);
+	// Berth finishes by itself and sends it home
+	plain := &http.Client{Transport: c.srv.Client().Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := plain.Get(red.Query().Get("cb") + "?code=" + url.QueryEscape(code))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if loc := resp.Header.Get("Location"); resp.StatusCode != 302 || !strings.HasPrefix(loc, c.srv.URL+"/local/wharf?paired=") || strings.Contains(loc, "error") {
+		t.Fatalf("callback: %d %s", resp.StatusCode, loc)
 	}
 	if !strings.HasPrefix(wf.BerthToken, "berth_wrf_") || wf.BerthFP != c.app.caFP() {
 		t.Fatalf("Wharf got %q %q", wf.BerthToken, wf.BerthFP)
@@ -90,10 +104,11 @@ func TestWharfLink(t *testing.T) {
 		t.Fatalf("conflict not shown: %d %v", r.StatusCode, out)
 	}
 	run("site.delete", map[string]any{"id": sid})
-	for i := 0; i < 40 && len(wf.Forwards) > 0; i++ {
+	nfw := func() int { wf.Lock(); defer wf.Unlock(); return len(wf.Forwards) }
+	for i := 0; i < 40 && nfw() > 0; i++ {
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(wf.Forwards) != 0 {
+	if nfw() != 0 {
 		t.Fatal("mapping left after deleting the site")
 	}
 
@@ -255,7 +270,7 @@ func TestWharfLink(t *testing.T) {
 	link := tk["url"].(string)
 	jar, _ := cookiejar.New(nil)
 	fresh := &http.Client{Transport: hc.Transport, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := fresh.Get(link)
+	resp, err = fresh.Get(link)
 	if err != nil || resp.StatusCode != 302 || resp.Header.Get("Location") != "/local/sites" {
 		t.Fatalf("sso: %v %v", err, resp)
 	}

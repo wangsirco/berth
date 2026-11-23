@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Check, Copy, Globe, House, Link2, Server, ShieldAlert, Unlink } from 'lucide-react'
+import { ArrowRight, BellRing, Check, Copy, Globe, House, Link2, Radar, Server, ShieldAlert, Unlink, Wifi } from 'lucide-react'
 import { Box, Dot, Empty, Notice, Pill } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -12,6 +12,8 @@ import { useApi, useInterval } from '@/lib/hooks'
 import { useLocale, useT } from '@/lib/i18n'
 import { useEvents } from '@/lib/useEvents'
 import { ReauthProvider, useReauth } from '../account/reauth'
+import { WharfMark } from '@/components/brand/WharfMark'
+import { WharfAsk } from './WharfAsk'
 
 // 面板互联: servers that both run Berth. One panel (main) manages what the other hands over;
 // the other keeps working by itself and can take them back. This page explains the two ways
@@ -27,7 +29,8 @@ interface LinkItem {
   id: number; role: 'main' | 'managed'; status: 'code' | 'confirm' | 'wait' | 'active'; name: string; slug: string; addrs: string[]; fp: string; sas?: string
   hosts: string[]; by: string; created_at: number; expires_at?: number; confirmed_at?: number; last_addr?: string; live: Live
 }
-interface Data { items: LinkItem[]; name: string; fp: string; addrs: string[] }
+interface LinkRequest { id: string; from: string; ip: string; at: number; code: string }
+interface Data { items: LinkItem[]; name: string; fp: string; addrs: string[]; discoverable_until: number; requests: LinkRequest[] }
 
 export default function LinksPage() {
   return <ReauthProvider><Links /></ReauthProvider>
@@ -36,9 +39,10 @@ export default function LinksPage() {
 function Links() {
   const t = useT()
   const d = useApi<Data>('/api/v1/links', [])
-  useEvents(['link.pending'], () => void d.reload())
+  useEvents(['link.pending', 'link.request'], () => void d.reload())
   useInterval(() => void d.reload(), 15000)
   const [making, setMaking] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [taking, setTaking] = useState<string | null>(null)
   // a link opened on this panel: /local/links#accept=<code>
   useEffect(() => {
@@ -50,6 +54,14 @@ function Links() {
   const managed = items.filter((l) => l.role === 'managed')
   return (
     <div className="space-y-4">
+      {(d.data?.requests ?? []).map((rq) => (
+        <div key={rq.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-acc bg-tint px-4 py-3" data-link-request={rq.id}>
+          <BellRing className="size-5 text-acc" />
+          <div className="min-w-0 flex-1 text-[13px]"><b>{t('links.request_title', { name: rq.from })}</b><div className="num text-[12px] text-mute">{rq.ip} · {datetime(rq.at)}</div></div>
+          <Button size="sm" variant="primary" onClick={() => setTaking(rq.code)}>{t('links.request_review')}</Button>
+          <Button size="sm" variant="ghost" onClick={() => void del(`/api/v1/links/requests/${rq.id}`).then(() => d.reload())}>{t('links.request_refuse')}</Button>
+        </div>
+      ))}
       <Box title={t('links.title')}>
         <div className="grid gap-3 p-4 md:grid-cols-2">
           <div className="rounded-xl border border-line p-3">
@@ -60,9 +72,13 @@ function Links() {
           <div className="rounded-xl border border-acc/50 bg-tint p-3">
             <div className="flex items-center gap-2 text-[13.5px] font-semibold"><Link2 className="size-4 text-acc" />{t('links.way_link')}</div>
             <p className="mt-1 text-[12.5px] text-mute">{t('links.way_link_d')}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant="primary" onClick={() => setMaking(true)}>{t('links.make')}</Button>
-              <Button size="sm" onClick={() => setTaking('')}>{t('links.take')}</Button>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="primary" onClick={() => setScanning(true)}><Radar className="size-3.5" />{t('links.scan')}</Button>
+              {d.data && <Discoverable until={d.data.discoverable_until} onChange={() => void d.reload()} />}
+            </div>
+            <div className="mt-2 text-[12px] text-mute">
+              {t('links.cross_net')} <button type="button" className="text-acc hover:underline" onClick={() => setMaking(true)}>{t('links.make_short')}</button>
+              {' · '}<button type="button" className="text-acc hover:underline" onClick={() => setTaking('')}>{t('links.take_short')}</button>
             </div>
           </div>
         </div>
@@ -78,6 +94,7 @@ function Links() {
         {managed.map((l) => <LinkCard key={l.id} l={l} onChange={() => void d.reload()} />)}
       </Box>
 
+      {scanning && <ScanDialog onClose={() => { setScanning(false); void d.reload() }} />}
       {making && d.data && <MakeDialog data={d.data} onClose={() => { setMaking(false); void d.reload() }} />}
       {taking !== null && <TakeDialog initial={taking} onClose={() => { setTaking(null); void d.reload() }} />}
     </div>
@@ -303,6 +320,73 @@ function TakeDialog({ initial, onClose }: { initial: string; onClose: () => void
               </Field>
               <div className="text-center"><div className="text-[12px] text-mute">{t('links.sas')}</div><div className="num text-[22px] font-semibold tracking-widest">{info.sas}</div><div className="text-[11.5px] text-mute">{t('links.sas_hint')}</div></div>
             </>}
+      </div>
+    </Dialog>
+  )
+}
+
+// Discoverable: like Bluetooth, this panel answers LAN discovery for ten minutes
+function Discoverable({ until, onChange }: { until: number; onChange: () => void }) {
+  const t = useT()
+  const [now, setNow] = useState(Date.now() / 1000)
+  useInterval(() => setNow(Date.now() / 1000), until > now ? 1000 : null)
+  const left = Math.max(0, Math.floor(until - now))
+  const set = (open: boolean) => void post('/api/v1/links/discoverable', { open }).then(onChange)
+  return left > 0
+    ? <span className="inline-flex items-center gap-2 rounded-full bg-ok/15 px-2.5 py-1 text-[12px] text-ok" data-discoverable="on">
+      <Wifi className="size-3.5 animate-pulse" />{t('links.discoverable_left', { time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` })}
+      <button type="button" className="text-mute hover:text-fg" onClick={() => set(false)}>{t('links.discoverable_stop')}</button>
+    </span>
+    : <Button size="sm" onClick={() => set(true)} title={t('links.discoverable_hint')} data-discoverable="off"><Wifi className="size-3.5" />{t('links.discoverable_open')}</Button>
+}
+
+interface Found { kind: 'berth' | 'wharf'; addr: string; ip: string; name?: string; version?: string; fp?: string; managed?: string; gateway?: boolean }
+
+// ScanDialog: panels open for discovery on this LAN, and the router's Wharf
+function ScanDialog({ onClose }: { onClose: () => void }) {
+  const t = useT()
+  const nav = useNavigate()
+  const reauth = useReauth()
+  const [res, setRes] = useState<{ items: Found[]; nets: string[] } | null>(null)
+  const [err, setErr] = useState('')
+  const [asked, setAsked] = useState<Record<string, 'sent' | 'done' | string>>({})
+  const scan = () => { setRes(null); setErr(''); post<{ items: Found[]; nets: string[] }>('/api/v1/links/scan').then(setRes).catch((e) => setErr(errText(e))) }
+  useEffect(scan, [])
+  // after a request: wait for the other side to allow (this panel then confirms by itself)
+  const links = useApi<Data>('/api/v1/links', [])
+  useEvents(['link.pending'], () => void links.reload())
+  useInterval(() => void links.reload(), Object.values(asked).includes('sent') ? 3000 : null)
+  useEffect(() => {
+    for (const [fp, st] of Object.entries(asked)) {
+      if (st === 'sent' && links.data?.items.some((l) => l.role === 'main' && l.status === 'active' && l.fp === fp)) setAsked((a) => ({ ...a, [fp]: 'done' }))
+    }
+  }, [links.data, asked])
+  const ask = async (f: Found) => {
+    try { await reauth(() => post('/api/v1/links/request', { addr: f.addr, fp: f.fp })); setAsked((a) => ({ ...a, [f.fp!]: 'sent' })) } catch (e) { setAsked((a) => ({ ...a, [f.fp!]: errText(e) })) }
+  }
+  return (
+    <Dialog open wide onOpenChange={(o) => !o && onClose()} title={t('links.scan')}
+      footer={<><Button variant="ghost" onClick={scan} disabled={!res}>{t('links.rescan')}</Button><Button className="ml-auto" onClick={onClose}>{t('common.close')}</Button></>}>
+      <div className="space-y-3 px-4 py-3 text-[13px]">
+        {err && <Notice tone="bad">{err}</Notice>}
+        {!res && !err && <div className="flex items-center gap-2 py-6 text-mute"><Radar className="size-4 animate-spin" />{t('links.scanning')}</div>}
+        {res && <div className="text-[12px] text-mute">{t('links.scanned', { nets: res.nets.join(', ') || '—' })}</div>}
+        {res && res.items.length === 0 && <Notice>{t('links.none_found')}</Notice>}
+        {res?.items.map((f) => (
+          <div key={f.addr} className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3" data-found={f.kind}>
+            {f.kind === 'wharf' ? <WharfMark className="size-6" /> : <Server className="size-5 text-acc" />}
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold">{f.kind === 'wharf' ? t('links.found_wharf') : f.name}{f.gateway && <span className="ml-2 text-[11.5px] font-normal text-mute">{t('links.is_router')}</span>}</div>
+              <div className="num text-[12px] text-mute">{f.addr}{f.version ? ` · ${f.version}` : ''}{f.managed ? ` · ${t('links.already_managed', { name: f.managed })}` : ''}</div>
+            </div>
+            {f.kind === 'wharf'
+              ? <WharfAsk addr={f.addr} onManual={() => { onClose(); nav('/local/wharf?url=' + encodeURIComponent(f.addr)) }} />
+              : asked[f.fp!] === 'done' ? <Pill tone="acc">{t('links.linked_now')}</Pill>
+                : asked[f.fp!] === 'sent' ? <span className="flex items-center gap-2 text-[12px] text-mute"><span className="size-2 animate-pulse rounded-full bg-acc" />{t('links.wait_allow', { name: f.name ?? '' })}</span>
+                  : <Button size="sm" variant="primary" disabled={!!f.managed} onClick={() => void ask(f)}>{t('links.ask_manage')}</Button>}
+            {asked[f.fp ?? ''] && !['sent', 'done'].includes(asked[f.fp ?? '']) && <div className="w-full"><Notice tone="bad">{asked[f.fp!]}</Notice></div>}
+          </div>
+        ))}
       </div>
     </Dialog>
   )

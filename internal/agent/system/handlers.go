@@ -577,6 +577,23 @@ func Register(s *agent.Server, dc *docker.Client) {
 	})
 
 	// packages
+	// mDNS (.local names for the panel)
+	s.Handle("GET /v1/system/mdns", func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		agent.WriteJSON(w, 200, MDNSStatus(r.Context()))
+	})
+	s.Handle("POST /v1/system/mdns", func(w http.ResponseWriter, r *http.Request, body []byte) {
+		var p struct {
+			Aliases []string `json:"aliases"`
+			IP      string   `json:"ip"`
+		}
+		json.Unmarshal(body, &p)
+		st := agent.NewStream(w)
+		err := MDNSApply(r.Context(), p.Aliases, p.IP, func(l string) { st.Send(map[string]string{"l": l}) })
+		if err != nil {
+			err = errs.New(400, "system.mdns_failed", "detail", err.Error())
+		}
+		st.End(err)
+	})
 	s.Handle("GET /v1/system/packages", func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		if r.URL.Query().Get("user") == "1" {
 			l, err := UserPackages(r.Context())

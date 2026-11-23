@@ -42,7 +42,9 @@ type App struct {
 	remotes     map[string]io.Closer // live remote sessions by host name
 	web         fs.FS
 	apiMux      *http.ServeMux
-	links_      *linkStates // panel links: what the probes found // the routes themselves (a linked panel's requests are dispatched here)
+	links_      *linkStates // panel links: what the probes found
+	wharfAsk_   *wharfAsk   // a LAN request to the router's Wharf, waiting for its admin
+	discovery_  *discovery  // LAN discovery: the open window and requests waiting // the routes themselves (a linked panel's requests are dispatched here)
 	builtinWeb  fs.FS       // the UI compiled in, for going back from a downloaded one
 	certRefresh func()      // re-issue the panel certificate (set by main)
 	pipe        *change.Pipeline

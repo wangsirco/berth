@@ -110,7 +110,8 @@ func (a *App) entryGate(h http.Handler) http.Handler {
 		}
 		// Tokens, signed-in sessions and the CA download do not need the entry cookie.
 		// invitation, file-share, desktop-share and proxy-subscription links check their own codes
-		if strings.HasPrefix(r.URL.Path, "/invite/") || strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/v/") || strings.HasPrefix(r.URL.Path, "/sub/") {
+		// …and Wharf's pairing callback, which checks the one-time code this panel handed out
+		if strings.HasPrefix(r.URL.Path, "/invite/") || strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/v/") || strings.HasPrefix(r.URL.Path, "/sub/") || r.URL.Path == "/wharf/paired" {
 			h.ServeHTTP(w, r)
 			return
 		}

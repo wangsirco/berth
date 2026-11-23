@@ -12,6 +12,8 @@ import { useApi } from '@/lib/hooks'
 import { useAuth } from '@/lib/auth'
 import { LOCALES, useLocale, useT, type Locale } from '@/lib/i18n'
 import { AuthCard } from '../auth/AuthCard'
+import { LocalNameGuide } from '@/components/access/LocalNameGuide'
+import { ChangeProvider } from '@/components/change/ChangeDialog'
 import { ReauthProvider } from '../account/reauth'
 import { LoginModeCard, PasskeyList, TotpSetup } from '../account/security'
 import { SoftwarePicker, type DesktopInfo } from '../remote/DesktopSoftware'
@@ -42,7 +44,7 @@ export default function Welcome() {
   const [deskPick, setDeskPick] = useState<string[]>([])
   const [deskStarted, setDeskStarted] = useState(false)
   const offerDesktop = !!desk && desk.status.supported && !desk.status.installed
-  const steps = superUser ? ['basics', 'access', 'security', 'adopt', ...(offerDesktop ? ['desktop'] : []), 'later'] : ['basics', 'security']
+  const steps = superUser ? ['basics', 'access', 'localname', 'security', 'adopt', ...(offerDesktop ? ['desktop'] : []), 'later'] : ['basics', 'security'] // localname: optional, what Passkey needs
   const [step, setStep] = useState(0)
   const [importing, setImporting] = useState<'1panel' | 'npm' | 'caddyfile' | null>(null)
   const [err, setErr] = useState('')
@@ -154,6 +156,7 @@ export default function Welcome() {
               </Field>
             </>
           )}
+          {id === 'localname' && <div className="px-5"><ChangeProvider host="local"><LocalNameGuide embedded /></ChangeProvider></div>}
           {id === 'security' && <div className="space-y-3 px-5">{user?.needs_2fa && <Notice tone="warn">{t('pub.wizard_2fa')}</Notice>}<PasskeyList onChange={() => void refresh()} /><TotpSetup onChange={() => void refresh()} /><LoginModeCard /></div>}
           {id === 'adopt' && (
             <div className="space-y-3 px-5">

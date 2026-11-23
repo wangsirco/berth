@@ -4,8 +4,8 @@ const handlers = new Set<Handler>()
 let es: EventSource | null = null
 let retry = 1000
 // every type the server publishes (internal/panel/events_types_test.go keeps this in step)
-const TYPES = ['task.update', 'task.log', 'change.done', 'change.pending', 'link.pending', 'token.activity', 'metrics.tick', 'host.online', 'host.offline',
-  'pipeline.run', 'release', 'backup.run', 'alert', 'uptime', 'firewall.pending', 'ban', 'waf', 'dev.task', 'cron.run', 'ssh.pending', 'drift']
+const TYPES = ['task.update', 'task.log', 'change.done', 'change.pending', 'link.pending', 'link.request', 'token.activity', 'metrics.tick', 'host.online', 'host.offline',
+  'pipeline.run', 'release', 'backup.run', 'alert', 'uptime', 'firewall.pending', 'ban', 'waf', 'dev.task', 'cron.run', 'ssh.pending', 'drift', 'wharf', 'wharf.request']
 
 function connect() {
   if (es || handlers.size === 0) return

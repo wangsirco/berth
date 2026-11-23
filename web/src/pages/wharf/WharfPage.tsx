@@ -21,15 +21,23 @@ const INSTALL = 'opkg install /tmp/luci-app-wharf_*.ipk'
 export default function WharfPage() {
   const t = useT()
   const st = useApi<WharfStatus>('/api/v1/wharf')
-  useEvents(['change.done'], () => void st.reload())
+  useEvents(['change.done', 'wharf'], () => void st.reload())
   if (!st.data) return st.error ? <Notice tone="bad">{st.error.message}</Notice> : <div className="p-6 text-[13px] text-mute">{t('common.loading')}</div>
+  // back from Wharf's approval page: Berth finished the pairing on the address Wharf reaches
+  const q = new URLSearchParams(location.search)
+  const paired = q.get('paired')
+  const banner = paired && (paired === 'error'
+    ? <Notice tone="bad">{t('wharf.pair_failed', { reason: q.get('reason') ? t(q.get('reason')!) : '' })}</Notice>
+    : <Notice tone="acc">{t('wharf.pair_done', { name: paired })}</Notice>)
   if (st.data.paired && st.data.link) {
     return (
       <div className="space-y-4">
+        {banner}
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-box)] border border-line bg-card px-4 py-3">
           <WharfMark className="size-8" />
           <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{t('wharfp.paired_with', { name: st.data.link.name })}</div><div className="num truncate text-[12px] text-mute">{st.data.link.url}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-2"><ConnBadge live={st.data.live} /><LiveLine live={st.data.live} /></div></div>
+            <div className="mt-1 flex flex-wrap items-center gap-2"><ConnBadge live={st.data.live} /><LiveLine live={st.data.live} />
+              {st.data.link.key_auth && <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-2 py-0.5 text-[11.5px] text-ok" title={t('wharfp.key_auth_hint')} data-key-auth>{t('wharfp.key_auth')}</span>}</div></div>
           <a href={st.data.link.url} target="_blank" rel="noreferrer"><Button size="sm" variant="primary"><ExternalLink className="size-3.5" />{t('wharf.open')}</Button></a>
           <a href={REPO} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><Github className="size-3.5" />GitHub</Button></a>
         </div>
@@ -38,10 +46,10 @@ export default function WharfPage() {
       </div>
     )
   }
-  return <Intro berthFP={st.data.berth_fp} />
+  return <Intro berthFP={st.data.berth_fp} banner={banner} />
 }
 
-function Intro({ berthFP }: { berthFP: string }) {
+function Intro({ berthFP, banner }: { berthFP: string; banner?: React.ReactNode }) {
   const t = useT()
   const { user } = useAuth()
   const [copied, setCopied] = useState(false)
@@ -53,6 +61,7 @@ function Intro({ berthFP }: { berthFP: string }) {
   ]
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-12">
+      {banner}
       {/* what it is */}
       <section className="overflow-hidden rounded-[calc(var(--radius-box)+4px)] border border-line bg-card">
         <div className="grid gap-6 p-6 md:grid-cols-[1.1fr_1fr] md:p-8">

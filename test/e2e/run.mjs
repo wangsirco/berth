@@ -122,6 +122,9 @@ await spec('setup-login', async () => {
   await page.screenshot({ path: OUT + 'welcome-access.png', fullPage: true })
   await fill('安全入口', '') // keep the e2e panel reachable without an entry path
   await click(btn('下一步')) // access
+  await waitText('本地域名（可选）') // optional, for Passkey: skipped here (the local-name spec walks it)
+  await waitText('想用 Passkey')
+  await click(btn('下一步'))
   await waitText('保护你的账号')
   await click(btn('设置验证器'))
   await waitText('用验证器 App 扫描')
@@ -691,6 +694,42 @@ await spec('vm-screen', async () => {
   sh('ssh', [HOST, 'incus stop --timeout 30 t-vnc 2>/dev/null || incus stop -f t-vnc 2>/dev/null; true']) // a fixture: off between runs
 })
 
+await spec('wharf-public-probe', async () => {
+  // only with WHARF_PUBLIC_URL (a real Wharf behind a public name): the pairing step explains a public certificate
+  if (!process.env.WHARF_PUBLIC_URL) { console.log('    skipped: WHARF_PUBLIC_URL not set'); return }
+  await page.goto(`${BASE}/local/wharf`)
+  await waitText('检查证书', 30000)
+  const box = await page.waitForSelector('::-p-xpath(//input[contains(@placeholder,"https://192.168.1.1")])')
+  await box.click({ clickCount: 3 })
+  await box.type(process.env.WHARF_PUBLIC_URL)
+  await click(btn('检查证书'))
+  await waitText('不用核对指纹', 20000)
+  assert(!(await page.$('input[type=radio]')), 'a fingerprint picker for a public certificate')
+  await page.screenshot({ path: OUT + 'wharf-public-probe.png' })
+})
+
+await spec('local-name', async () => {
+  // the guide for Passkey's name: the host's own name.local (avahi already answers it, nothing is written)
+  const hostName = sh('ssh', [HOST, 'hostname -s']).toLowerCase()
+  const st = (await api('/api/v1/local-name')).body
+  assert(st.suggested === hostName + '.local' && st.ip, 'status: ' + JSON.stringify(st))
+  await page.goto(`${BASE}/local/settings`)
+  await click('::-p-xpath(//button[normalize-space(.)="设置本地域名"])')
+  await page.waitForSelector('[data-local-name-guide]', { timeout: 15000 })
+  await waitText('用 ' + hostName + '.local（推荐）')
+  await click('::-p-xpath(//*[@data-local-name-guide]//button[normalize-space(.)="启用这个名字"])')
+  await click('[data-testid=confirm]:not([disabled])', 15000)
+  await waitText(hostName + '.local 已生效', 60000)
+  const after = (await api('/api/v1/local-name')).body
+  assert(after.current === hostName + '.local' && after.mdns.active, 'after: ' + JSON.stringify(after))
+  assert(!sh('ssh', [HOST, 'cat /etc/avahi/hosts 2>/dev/null; true']).includes('berth: panel names'), 'wrote an alias for the host name')
+  await page.screenshot({ path: OUT + 'local-name.png' })
+  // back to no name
+  const undo = await change('panel.local_name', { name: '' })
+  assert(undo.status === 'done' && (await api('/api/v1/local-name')).body.current === '', 'clear: ' + JSON.stringify(undo))
+  await page.keyboard.press('Escape')
+})
+
 await spec('panel-link', async () => {
   // two panels: A is this e2e panel on the dev server; B is the panel inside the fedora-1 VM
   // (on the LAN with its own address). A temporary NAT card lets the server and the VM reach
@@ -722,12 +761,12 @@ await spec('panel-link', async () => {
     await page.bringToFront()
     await page.goto(`${BASE}/local/links`)
     await waitText('对方已经装了 Berth 面板', 30000)
-    await click('::-p-xpath(//button[normalize-space(.)="管理另一个面板（生成配对码）"])')
+    await click('::-p-xpath(//button[normalize-space(.)="生成配对码"][not(ancestor::*[@role="dialog"])])') // the cross-network way
     await page.waitForSelector('[data-our-addrs]', { timeout: 15000 })
     await page.$eval('[data-our-addrs]', (el) => { el.focus(); el.select() })
     await page.keyboard.press('Backspace')
     await page.type('[data-our-addrs]', A_NAT)
-    await click(btn('生成配对码'))
+    await click('::-p-xpath(//*[@role="dialog"]//button[normalize-space(.)="生成配对码"])')
     await page.waitForSelector('[data-link-code]')
     const code = await page.$eval('[data-link-code]', (el) => el.value)
     assert(code.startsWith('berth-link:'), 'code: ' + code.slice(0, 20))
@@ -795,6 +834,49 @@ await spec('panel-link', async () => {
     let gone = 0
     for (let i = 0; i < 15 && gone !== 404; i++) { await sleep(1000); gone = (await api(`/api/v1/hosts/${encodeURIComponent(peer)}/containers`)).status }
     assert(gone === 404, 'A still reaches B after unlink: ' + gone)
+
+    // the same, the Bluetooth way: B lets itself be found, A asks, B allows; A confirms by itself
+    await pageB.bringToFront()
+    await pageB.goto(B_LAN + '/local/links')
+    await pageB.waitForSelector('[data-discoverable=off]', { timeout: 20000 })
+    await pageB.click('[data-discoverable=off]')
+    await pageB.waitForSelector('[data-discoverable=on]', { timeout: 10000 })
+    const info = JSON.parse(sh('ssh', [HOST, `curl -sk ${B_NAT}/link-api/discover`]))
+    assert(info.product === 'berth' && info.fp, 'discover: ' + JSON.stringify(info))
+    let rq = await post('/api/v1/links/request', { addr: B_NAT, fp: info.fp })
+    if (rq.status === 403) { await post('/api/v1/me/reauth', { password: PASSWORD }); rq = await post('/api/v1/links/request', { addr: B_NAT, fp: info.fp }) }
+    assert(rq.status === 200, 'request: ' + JSON.stringify(rq.body))
+    await pageB.waitForSelector('[data-link-request]', { timeout: 30000 })
+    await pageB.click('::-p-xpath(//*[@data-link-request]//button[normalize-space(.)="查看并允许"])')
+    await pageB.waitForFunction(() => document.body.innerText.includes('想管理这个面板的服务器'), { timeout: 30000 })
+    await pageB.waitForSelector('[role=dialog] textarea', { timeout: 15000 })
+    await pageB.$eval('[role=dialog] textarea', (el) => { el.focus(); el.select() })
+    await pageB.keyboard.press('Backspace')
+    await pageB.type('[role=dialog] textarea', B_NAT)
+    await pageB.click('::-p-xpath(//*[@role="dialog"]//button[starts-with(normalize-space(.),"交出")])')
+    let auto = false
+    for (let i = 0; i < 30 && !auto; i++) { await sleep(1000); auto = !!(await api('/api/v1/links')).body?.items?.find((x) => x.role === 'main' && x.status === 'active' && x.fp === info.fp) }
+    assert(auto, 'A did not confirm by itself after B allowed')
+    await pageB.screenshot({ path: OUT + 'panel-link-allowed.png' })
+    // the scan finds the router's Wharf on the gateway (when there is one)
+    if (sh('ssh', [HOST, "gw=$(ip route | awk '/default/ {print $3; exit}'); timeout 2 bash -c \"</dev/tcp/$gw/7080\" 2>/dev/null && echo open; true"]).includes('open')) {
+      const scan = await post('/api/v1/links/scan', {})
+      assert(scan.body?.items?.some((f) => f.kind === 'wharf' && f.gateway), 'scan did not find the Wharf on the gateway: ' + JSON.stringify(scan.body))
+      // ask the real Wharf from the scan dialog: with its window closed it answers 404 and the
+      // person is told where to open it (the allow itself needs the router admin's sign-in)
+      const wh = scan.body.items.find((f) => f.kind === 'wharf' && f.gateway)
+      let ask = await post('/api/v1/wharf/request', { addr: wh.addr })
+      if (ask.status === 403) { await post('/api/v1/me/reauth', { password: PASSWORD }); ask = await post('/api/v1/wharf/request', { addr: wh.addr }) }
+      const closed = ask.status === 409 && /允许 Berth 申请绑定/.test(JSON.stringify(ask.body))
+      const open = ask.status === 200 && /^\d{3} \d{3}$/.test(ask.body?.sas ?? '')
+      assert(closed || open, 'request to the real Wharf: ' + ask.status + ' ' + JSON.stringify(ask.body))
+      if (open) await page.evaluate(async () => { const me = await (await fetch('/api/v1/me')).json(); await fetch('/api/v1/wharf/request', { method: 'DELETE', headers: { 'X-CSRF-Token': me.csrf } }) })
+      await page.bringToFront()
+      await page.goto(`${BASE}/local/links`)
+      await click('::-p-xpath(//button[normalize-space(.)="内网发现"])')
+      await page.waitForSelector('[data-found=wharf] [data-wharf-ask]', { timeout: 40000 })
+      await page.screenshot({ path: OUT + 'wharf-ask.png' })
+    }
   } finally {
     await pageB.evaluate(async () => { // never leave a link behind on B
       const me = await (await fetch('/api/v1/me')).json()

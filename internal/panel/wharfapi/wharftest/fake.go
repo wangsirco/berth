@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wangsirco/berth/internal/panel/wharfapi"
 	"github.com/wangsirco/berth/internal/sign"
@@ -36,8 +37,16 @@ type Fake struct {
 	Alerts     []wharfapi.Alert
 	Actors     []string
 	Unpaired   string // keep value of the last unpair
-	nonces     map[string]bool
-	next       int
+	// protocol v2
+	V2      bool              // answer ping with protocol 2 and take X-Berth-Key
+	KeyAuth bool              // Berth signed with a key id: call it back with X-Wharf-Key
+	Bearers int               // requests that still carried the token
+	Open    bool              // LAN requests accepted
+	Asks    map[string]string // code → waiting | allowed | refused
+	AskURLs []string
+	DNS     map[string]string // name → ip
+	nonces  map[string]bool
+	next    int
 }
 
 func New() *Fake {
@@ -70,7 +79,7 @@ func (f *Fake) State() map[string]any {
 }
 
 func newFake() *Fake {
-	f := &Fake{Code: "pair-code-1", Forwards: map[string]wharfapi.Forward{}, Bans: map[string]wharfapi.Ban{}, nonces: map[string]bool{},
+	f := &Fake{Code: "pair-code-1", Forwards: map[string]wharfapi.Forward{}, Bans: map[string]wharfapi.Ban{}, Asks: map[string]string{}, DNS: map[string]string{}, nonces: map[string]bool{},
 		DDNSList: []wharfapi.DDNS{{ID: "d1", Domain: "home.example.net", Owner: "wharf", IP: "198.51.100.20", Status: "ok"}}}
 	return f
 }
@@ -99,14 +108,49 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Code, f.Paired = "", true
 		f.Token, f.BerthToken, f.BerthURL, f.BerthFP = "wharf_bth_"+sign.RandomHex(16), in.BerthToken, in.BerthURL, in.BerthFP
-		reply(w, 200, wharfapi.ExchangeResult{Token: f.Token, Scopes: []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso"},
+		reply(w, 200, wharfapi.ExchangeResult{Token: f.Token, Scopes: []string{"forwards", "sni", "ddns", "devices.read", "traffic.read", "bans", "alerts", "sso", "dns"},
 			WharfName: "Wharf · 家里", TargetIPs: []string{"192.168.1.20"}})
 		return
 	}
-	// everything else: token, signature, nonce
-	if !f.Paired || r.Header.Get("Authorization") != "Bearer "+f.Token {
+	if path == "/pair/request" && r.Method == "POST" {
+		var in wharfapi.PairRequest
+		json.Unmarshal(body, &in)
+		if !f.V2 || !f.Open {
+			fail(w, 404, "404 page not found")
+			return
+		}
+		if in.WharfFP != f.FP {
+			fail(w, 400, "Berth 看到的 Wharf 证书指纹不对：中间可能有人换了证书")
+			return
+		}
+		f.Asks[in.Code], f.AskURLs = "waiting", in.BerthURLs
+		reply(w, 200, wharfapi.PairAsk{ID: "q1", SAS: wharfapi.SAS(in.Code, in.BerthFP, f.FP), ExpiresAt: time.Now().Add(10 * time.Minute).Unix()})
+		return
+	}
+	if path == "/pair/request/status" && r.Method == "POST" {
+		var in struct{ Code string }
+		json.Unmarshal(body, &in)
+		st, ok := f.Asks[in.Code]
+		if !ok {
+			fail(w, 404, "404 page not found")
+			return
+		}
+		if st == "allowed" {
+			f.Code = "allowed-code"
+			reply(w, 200, wharfapi.PairAskState{State: st, Code: f.Code, WharfURL: f.URL})
+			return
+		}
+		reply(w, 200, wharfapi.PairAskState{State: st})
+		return
+	}
+	// everything else: token (or its key id), signature, nonce
+	kid := r.Header.Get("X-Berth-Key")
+	if !f.Paired || (kid == "" && r.Header.Get("Authorization") != "Bearer "+f.Token) || (kid != "" && (!f.V2 || kid != wharfapi.KeyID(f.Token))) {
 		fail(w, 401, "对接已失效，请重新配对")
 		return
+	}
+	if kid == "" {
+		f.Bearers++
 	}
 	nonce, err := sign.CheckPrefixed(r, "X-Berth", sign.DeriveKey(f.Token), body)
 	if err != nil {
@@ -118,6 +162,9 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.nonces[nonce] = true
+	if kid != "" {
+		f.KeyAuth = true
+	}
 	if a := r.Header.Get("X-Berth-Actor"); a != "" {
 		f.Actors = append(f.Actors, a)
 	}
@@ -222,13 +269,55 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, map[string]string{"url": f.URL + "/sso/berth?t=ticket-" + id})
-	case path == "/pair" && r.Method == "DELETE":
-		f.Paired, f.Unpaired = false, r.URL.Query().Get("keep")
+	case path == "/unpair" && r.Method == "POST":
+		var in struct{ Keep bool }
+		json.Unmarshal(body, &in)
+		f.Paired, f.Unpaired, f.DNS = false, fmt.Sprint(in.Keep), map[string]string{}
 		reply(w, 200, map[string]bool{"ok": true})
+	case path == "/ping":
+		p := map[string]any{"ok": true, "name": "Wharf · 家里"}
+		if f.V2 {
+			p["protocol"], p["key_auth"] = 2, f.KeyAuth
+		}
+		reply(w, 200, p)
+	case path == "/dns/names" && r.Method == "GET":
+		items := []map[string]string{}
+		for n, ip := range f.DNS {
+			items = append(items, map[string]string{"name": n, "ip": ip})
+		}
+		reply(w, 200, map[string]any{"items": items, "suffixes": []string{"lan"}, "max": 5})
+	case strings.HasPrefix(path, "/dns/names/") && r.Method == "PUT":
+		var in struct{ IP string }
+		json.Unmarshal(body, &in)
+		f.DNS[strings.TrimPrefix(path, "/dns/names/")] = in.IP
+		reply(w, 200, map[string]any{"ok": true})
+	case strings.HasPrefix(path, "/dns/names/") && r.Method == "DELETE":
+		n := strings.TrimPrefix(path, "/dns/names/")
+		if _, ok := f.DNS[n]; !ok {
+			fail(w, 404, "不存在")
+			return
+		}
+		delete(f.DNS, n)
+		reply(w, 200, map[string]any{"ok": true})
 	default:
 		fail(w, 404, "没有这个接口")
 	}
 }
+
+// Allow: the router's admin allows (or refuses) every waiting LAN request.
+func (f *Fake) Allow(ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for c, st := range f.Asks {
+		if st == "waiting" {
+			f.Asks[c] = map[bool]string{true: "allowed", false: "refused"}[ok]
+		}
+	}
+}
+
+// Lock / Unlock: tests read the fields under the fake's lock.
+func (f *Fake) Lock()   { f.mu.Lock() }
+func (f *Fake) Unlock() { f.mu.Unlock() }
 
 // CallBerth calls Berth's side of the link the way Wharf does (token + X-Wharf signature).
 func (f *Fake) CallBerth(hc *http.Client, base, method, path string, in any) (int, map[string]any) {
@@ -241,7 +330,11 @@ func (f *Fake) CallBerth(hc *http.Client, base, method, path string, in any) (in
 	f.mu.Lock()
 	tok := f.BerthToken
 	f.mu.Unlock()
-	req.Header.Set("Authorization", "Bearer "+tok)
+	if f.KeyAuth {
+		req.Header.Set("X-Wharf-Key", wharfapi.KeyID(tok))
+	} else {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	sign.SignPrefixed(req, "X-Wharf", sign.DeriveKey(tok), body)
 	resp, err := hc.Do(req)
 	if err != nil {

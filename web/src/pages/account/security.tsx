@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Field'
 import { ApiError, del, patch, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { LocalNameDialog } from '@/components/access/LocalNameGuide'
 import { ago, datetime } from '@/lib/format'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
@@ -19,6 +20,8 @@ export function PasskeyList({ onChange }: { onChange?: () => void }) {
   const reauth = useReauth()
   const list = useApi<{ items: { id: number; name: string; rp_id: string; created_at: number; last_used_at: number }[]; usable: boolean; here: string }>('/api/v1/me/passkeys')
   const [err, setErr] = useState('')
+  const [guide, setGuide] = useState(false)
+  const { user: authUser } = useAuth()
   const can = passkeySupported() && !onIPAddress() && list.data?.usable !== false
   const add = async () => {
     setErr('')
@@ -35,7 +38,9 @@ export function PasskeyList({ onChange }: { onChange?: () => void }) {
   return (
     <Box title="Passkey" right={<Button size="sm" onClick={() => void add()} disabled={!can}><KeyRound className="size-3.5" />{t('passkey.add')}</Button>}>
       {err && <div className="p-3"><Notice tone="bad">{err}</Notice></div>}
-      {!can && <div className="px-3.5 py-2 text-[12.5px] text-mute">{onIPAddress() ? t('login.passkey_needs_name') : t('login.passkey_unsupported')}</div>}
+      {!can && <div className="px-3.5 py-2 text-[12.5px] text-mute">{onIPAddress() ? t('login.passkey_needs_name') : t('login.passkey_unsupported')}
+        {onIPAddress() && authUser?.role === 'super' && <button type="button" className="ml-2 text-acc hover:underline" onClick={() => setGuide(true)}>{t('lname.title')}</button>}</div>}
+      {guide && <LocalNameDialog onClose={() => setGuide(false)} />}
       {list.data?.items.length === 0 && <Empty title={t('passkey.none')}>{t('passkey.why')}</Empty>}
       {list.data?.items.map((p) => (
         <Row key={p.id}>

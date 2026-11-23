@@ -94,7 +94,15 @@ func (a *App) handleLinks(w http.ResponseWriter, r *http.Request) {
 	for _, l := range a.links(`ORDER BY id`) {
 		out = append(out, linkView{l, a.liveOf(l)})
 	}
-	writeJSON(w, 200, map[string]any{"items": out, "name": a.panelDisplayName(), "fp": a.caFP(), "addrs": a.ourAddrs(r)})
+	d := a.disc()
+	d.Lock()
+	reqs, until := d.list(), d.until
+	d.Unlock()
+	if !until.After(time.Now()) {
+		until = time.Time{}
+	}
+	writeJSON(w, 200, map[string]any{"items": out, "name": a.panelDisplayName(), "fp": a.caFP(), "addrs": a.ourAddrs(r),
+		"discoverable_until": until.Unix(), "requests": reqs})
 }
 
 // ---- 1. main: a code ----
@@ -281,6 +289,10 @@ func (a *App) handleLinkAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = a.pipe.Record(currentActor(r), "local", "link.accept", map[string]any{"id": id, "main": c.Name, "hosts": hosts},
 		change.Plan{Summary: "plan.link.accept", SummaryP: map[string]any{"name": c.Name, "hosts": strings.Join(hosts, ", ")}, Risk: change.RiskHigh})
+	d := a.disc() // a LAN request it answered is done
+	d.Lock()
+	delete(d.requests, secretHash(c.S)[:16])
+	d.Unlock()
 	writeJSON(w, 200, map[string]any{"id": id, "sas": ins.sas})
 }
 
@@ -353,6 +365,12 @@ func (a *App) handleLinkOffer(w http.ResponseWriter, r *http.Request) {
 	a.db.Exec(`UPDATE panel_links SET status='confirm', name=?, slug=?, addrs=?, fp=?, uid=?, key_enc=?, sas=?, hosts=?, secret_hash='', priv_enc=NULL WHERE id=?`,
 		name, a.linkSlug(name, l.ID), jsonText(addrs), strings.ToLower(in.FP), in.UID, keyEnc, linkSAS(myPub, peerPub), jsonText(hosts), l.ID)
 	a.hub.publish(event{Type: "link.pending", Data: map[string]any{"id": l.ID, "name": name}})
+	// asked from LAN discovery: this panel's admin already confirmed when sending the request
+	var auto int
+	a.db.QueryRow(`SELECT auto_confirm FROM panel_links WHERE id=?`, l.ID).Scan(&auto)
+	if auto == 1 {
+		go a.autoConfirm(l.ID)
+	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -641,4 +659,22 @@ type peerInfo struct {
 	Route string  `json:"route,omitempty"`
 	Via   string  `json:"via,omitempty"`
 	RTT   float64 `json:"rtt_ms,omitempty"`
+}
+
+// autoConfirm: a link this panel asked for over the LAN becomes active as soon as the other allows
+func (a *App) autoConfirm(id int64) {
+	l, err := a.link(`WHERE id=? AND role=? AND status='confirm'`, id, linkRoleMain)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.linkCall(ctx, l, "POST", "/link-api/activate", map[string]string{"name": a.panelDisplayName()}, nil); err != nil {
+		return // stays waiting for a manual confirm
+	}
+	a.db.Exec(`UPDATE panel_links SET status='active', confirmed_at=? WHERE id=?`, time.Now().Unix(), l.ID)
+	_, _ = a.pipe.Record(change.Actor{Type: "system", Name: "berth"}, "local", "link.confirm", map[string]any{"id": l.ID, "peer": l.Name, "hosts": l.Hosts, "auto": true},
+		change.Plan{Summary: "plan.link.confirm", SummaryP: map[string]any{"name": l.Name, "hosts": strings.Join(l.Hosts, ", ")}, Risk: change.RiskHigh})
+	a.hub.publish(event{Type: "link.pending", Data: map[string]any{"id": l.ID, "name": l.Name}})
+	a.probeLinks(context.Background())
 }

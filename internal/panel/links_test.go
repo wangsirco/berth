@@ -180,3 +180,64 @@ func TestPanelLinkOnlyOneMain(t *testing.T) {
 		t.Fatalf("own code: %d", r.StatusCode)
 	}
 }
+
+// LAN discovery: found only while open, a request shows up on the other panel, allowing it
+// is all it takes (the asking panel confirms by itself)
+func TestPanelLinkDiscovery(t *testing.T) {
+	a, b := newPanelTC(t), newPanelTC(t)
+	for _, c := range []*tc{a, b} {
+		c.mkUser("root", "correct horse 9", RoleSuper)
+		c.login("root", "correct horse 9")
+	}
+	b.app.setSetting("panel.name", "Home mini")
+	disc := func() int {
+		resp, err := b.srv.Client().Get(b.srv.URL + "/link-api/discover")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if disc() != 404 {
+		t.Fatal("found while closed")
+	}
+	if r, _ := b.do("POST", "/api/v1/links/discoverable", map[string]bool{"open": true}); r.StatusCode != 200 {
+		t.Fatal("open")
+	}
+	if disc() != 200 {
+		t.Fatal("not found while open")
+	}
+	r, out := a.do("POST", "/api/v1/links/request", map[string]string{"addr": b.srv.URL, "fp": b.app.caFP()})
+	if r.StatusCode != 200 {
+		t.Fatalf("request: %d %v", r.StatusCode, out)
+	}
+	_, bl := b.do("GET", "/api/v1/links", nil)
+	reqs := bl["requests"].([]any)
+	if len(reqs) != 1 {
+		t.Fatalf("requests on B: %v", bl)
+	}
+	code := reqs[0].(map[string]any)["code"].(string)
+	if r, ins := b.do("POST", "/api/v1/links/inspect", map[string]string{"code": code}); r.StatusCode != 200 {
+		t.Fatalf("inspect: %v", ins)
+	}
+	if r, acc := b.do("POST", "/api/v1/links/accept", map[string]any{"code": code, "hosts": []string{"local"}}); r.StatusCode != 200 {
+		t.Fatalf("allow: %v", acc)
+	}
+	active := false
+	for i := 0; i < 40 && !active; i++ {
+		time.Sleep(100 * time.Millisecond)
+		l := a.app.links(`WHERE role=? AND status='active'`, linkRoleMain)
+		active = len(l) == 1
+	}
+	if !active {
+		t.Fatal("A did not confirm by itself")
+	}
+	if _, bl := b.do("GET", "/api/v1/links", nil); len(bl["requests"].([]any)) != 0 {
+		t.Fatal("the answered request is still waiting")
+	}
+	// closing discovery drops it from the LAN again
+	b.do("POST", "/api/v1/links/discoverable", map[string]bool{"open": false})
+	if disc() != 404 {
+		t.Fatal("found after closing")
+	}
+}

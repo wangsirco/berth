@@ -300,4 +300,12 @@ var migrations = []string{
 		hosts TEXT NOT NULL DEFAULT '[]', by_user TEXT NOT NULL DEFAULT '', by_id INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0, confirmed_at INTEGER NOT NULL DEFAULT 0, last_addr TEXT NOT NULL DEFAULT '');
 	 CREATE INDEX panel_links_uid ON panel_links(uid)`,
+	// v49: 内网发现发起的互联——主面板发起申请时已验证身份，对方允许后自动确认
+	`ALTER TABLE panel_links ADD COLUMN auto_confirm INTEGER NOT NULL DEFAULT 0`,
+	// v50: Wharf 协议 v2——Wharf 用的令牌（加密保存，签名不再带令牌本身时要用它验签）、对方协议版本、
+	// 对方是否已改用 X-Wharf-Key、Berth 在路由器上登记的本地域名
+	`ALTER TABLE wharf_link ADD COLUMN inbound_enc BLOB;
+	 ALTER TABLE wharf_link ADD COLUMN protocol INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE wharf_link ADD COLUMN wharf_key_auth INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE wharf_link ADD COLUMN dns_name TEXT NOT NULL DEFAULT ''`,
 }

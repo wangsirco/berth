@@ -4,6 +4,7 @@ import { useChange } from '@/components/change/ChangeDialog'
 import { ImportDialog } from '@/components/import/ImportDialog'
 import { PublicAccessSettings } from '@/components/access/PublicAccess'
 import { PanelAddress } from '@/components/access/PanelAddress'
+import { LocalNameDialog } from '@/components/access/LocalNameGuide'
 import { Box } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select, Switch, Textarea } from '@/components/ui/Field'
@@ -38,6 +39,7 @@ function General() {
   const run = useChange()
   const s = useApi<S>('/api/v1/settings')
   const [v, setV] = useState<Record<string, string>>({})
+  const [guide, setGuide] = useState(false)
   const [users, setUsers] = useState<string[]>([])
   const [importing, setImporting] = useState<'1panel' | 'npm' | 'caddyfile' | null>(null)
   useEffect(() => { if (s.data) setV({ ...s.data.values, 'access.allow_cidrs': (s.data.values['access.allow_cidrs'] ?? '').split(/[,\n]/).join('\n') }) }, [s.data])
@@ -62,6 +64,8 @@ function General() {
         <Field label={t('welcome.entry')} hint={t('welcome.entry_hint')}><Input className="num" value={v['access.entry'] ?? ''} onChange={set('access.entry')} placeholder={t('settings.entry_off')} /></Field>
         <Field label={t('welcome.cidrs')} hint={s.data.public ? t('pub.cidrs_off') : t('welcome.cidrs_hint', { ip: s.data.client_ip })}><Textarea className="num h-28 text-[12.5px]" value={v['access.allow_cidrs'] ?? ''} onChange={set('access.allow_cidrs')} /></Field>
         <PanelAddress lan={v['panel.lan_host'] ?? ''} pub={v['panel.public_host'] ?? ''} savedPub={orig['panel.public_host'] ?? ''} onChange={(k, x) => setV({ ...v, [k]: x })} />
+        <Field label={t('lname.title')} hint={t('lname.settings_hint')}><Button size="sm" onClick={() => setGuide(true)}>{t('lname.open_guide')}</Button></Field>
+        {guide && <LocalNameDialog onClose={() => { setGuide(false); void s.reload() }} />}
         <Field label={t('settings.ca')} className="pb-3">
           <p className="num break-all text-[12px] text-mute">{s.data.ca_fingerprint}</p>
           <a href="/api/v1/ca.crt" download><Button size="sm" className="mt-2"><Download className="size-3.5" />{t('settings.ca_download')}</Button></a>
