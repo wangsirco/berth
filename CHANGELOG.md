@@ -2,6 +2,19 @@
 
 简体中文在前，English below each version.
 
+## 1.6.4 · 2026-11-24
+
+**经隧道 / 公网名字登录：Passkey 跟着名字走，不再卡在「还差一步」**
+- **修复**：面板经 Cloudflare 隧道开放后，在公网名字（如 `berth.你的域名`）上用密码登录，会要求用 Passkey 做二步验证。可是 Passkey 只在 `mini.lan` 上，这个名字上用不了，于是登录卡住。现在只算当前名字上能用的 Passkey：这个名字上还没有时，先用密码登录，登录后马上提示「在这里添加 Passkey」。
+- **开放之后马上提醒**：隧道开放后，设置页的隧道卡片会说明「`berth.你的域名` 上还没有你的 Passkey」，一个按钮带着登录状态过去，直接停在添加 Passkey。
+- 账号自己选了「密码 + 二步验证」、但这个名字上没有可用的验证方式时，登录会明确说 Passkey 在哪个地址、怎么补上，不再只显示没法完成的一步。
+
+---
+
+- Passkeys belong to a name: on a name where the account has none (e.g. the tunnel name), the forced second step no longer asks for a Passkey that cannot work there; sign in with the password and the panel asks you to add one on that name.
+- After publishing through the tunnel, the card offers to add a Passkey on the public name (opened signed in).
+- An account that requires two steps itself is told where its Passkeys are when this name has none.
+
 ## 1.6.3 · 2026-11-24
 
 **Cloudflare 隧道：在设置页一步开放面板**

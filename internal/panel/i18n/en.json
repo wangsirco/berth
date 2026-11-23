@@ -1884,5 +1884,6 @@
  "cf.panel_local_only": "Only the machine the panel runs on can publish it",
  "cf.no_panel_tunnel": "The panel is not published through the tunnel",
  "cf.bad_panel_name": "Use a name like panel.example.com",
- "cf.panel_name_used": "{name} is already used by a site; pick another name"
+ "cf.panel_name_used": "{name} is already used by a site; pick another name",
+ "auth.no_factor_here": "This account requires a second step, but its Passkeys are on {names} and do not work here. Sign in there first and add a Passkey for this address, or set up an authenticator app."
 }

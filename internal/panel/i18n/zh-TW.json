@@ -1884,5 +1884,6 @@
  "cf.panel_local_only": "只能在面板所在的這台機器上開放面板",
  "cf.no_panel_tunnel": "面板沒有透過通道開放",
  "cf.bad_panel_name": "名稱不對：要像 panel.example.com 這樣",
- "cf.panel_name_used": "{name} 已經被一個網站使用，換個名稱"
+ "cf.panel_name_used": "{name} 已經被一個網站使用，換個名稱",
+ "auth.no_factor_here": "這個帳號要求二步驟驗證，但它的 Passkey 在 {names} 上，在這個網址用不了。請先用那個網址登入，在「帳號」裡為這個網址新增 Passkey 或設定驗證器 App。"
 }

@@ -10,7 +10,7 @@ import { LocalNameDialog } from './LocalNameGuide'
 // name once this device can open it, because Passkey belongs to a name. A one-time hop link
 // carries the security entry and the sign-in across.
 
-export interface Where { lan: string; lan_name: string; public: string; public_name: string; current: string; is_main: boolean; fallback: string; setup: boolean; renamed: string; passkeys_here: number; passkeys_main: number; old_name: string; adopt_on_pair: boolean }
+export interface Where { lan: string; lan_name: string; public: string; public_name: string; current: string; is_main: boolean; fallback: string; setup: boolean; renamed: string; passkeys_here: number; passkeys_main: number; old_name: string; adopt_on_pair: boolean; my_passkeys?: string[] }
 
 // reachable: the browser opens this panel at base (resolves the name, trusts the certificate)
 export async function reachable(base: string, ms = 1500): Promise<boolean> {

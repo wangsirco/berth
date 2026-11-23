@@ -95,3 +95,32 @@ func TestPanelThroughTunnel(t *testing.T) {
 		t.Fatal("still exposed")
 	}
 }
+
+// Passkeys belong to a name: one made on mini.lan does not make the public name ask for a
+// second step it cannot give (sign in with the password, then add one there)
+func TestSecondStepFollowsTheName(t *testing.T) {
+	c := newTC(t)
+	u := c.mkUser("root", "correct horse 9", "super")
+	c.app.db.Exec(`INSERT INTO passkeys(user_id, rp_id, name, cred, created_at) VALUES(?,?,?,?,?)`, u.ID, "mini.lan", "Mac", "{}", time.Now().Unix())
+	c.app.setSetting("access.tunnel_host", "panel.example.com")
+	at := func(host string) string {
+		r := httptest.NewRequest("POST", "https://"+host+"/api/v1/auth/login", nil)
+		st, err := c.app.passwordLoginStage(r, u)
+		if err != nil {
+			return "error:" + err.Error()
+		}
+		return st
+	}
+	if s := at("mini.lan"); s != "second_step" {
+		t.Fatalf("on the Passkey's name: %s", s)
+	}
+	if s := at("panel.example.com"); s != "full" {
+		t.Fatalf("on the public name: %s", s)
+	}
+	// an account that asked for two steps itself: refused, with where its Passkeys are
+	c.app.setLoginMode(u.ID, LoginPassword2FA)
+	u.LoginMode = LoginPassword2FA
+	if s := at("panel.example.com"); s == "full" || s == "second_step" {
+		t.Fatalf("explicit 2FA on a name without a factor: %s", s)
+	}
+}

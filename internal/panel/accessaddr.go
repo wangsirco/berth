@@ -76,8 +76,13 @@ func init() {
 				a.db.QueryRow(`SELECT COUNT(*) FROM passkeys WHERE rp_id=?`, rp).Scan(&n)
 				return n
 			}
+			mine := []string{} // the names the signed-in account has Passkeys on
+			if s := a.loadSession(r); s != nil {
+				mine = nonNilS(a.passkeyNames(s.user.ID))
+			}
 			writeJSON(w, 200, map[string]any{
-				"lan": a.nameURL(lan), "lan_name": lan, "public": a.nameURL(pub), "public_name": pub,
+				"my_passkeys": mine,
+				"lan":         a.nameURL(lan), "lan_name": lan, "public": a.nameURL(pub), "public_name": pub,
 				"current": cur, "is_main": cur == lan || (pub != "" && cur == pub),
 				"fallback": "https://" + net.JoinHostPort(firstNonEmpty(a.lanIP(), cur), a.panelPort()),
 				"setup":    a.userCount() == 0,
@@ -184,7 +189,6 @@ func (a *App) adoptLANName(scopes []string) {
 		a.setSetting("access.renamed_from", old) // stays after the notice is seen (for Passkeys left there)
 	}
 }
-
 
 // connectSrc: where the page may probe besides itself — the panel's own names and LAN names
 // in general (does this device open the main name? is the router's Wharf reachable from

@@ -1,8 +1,10 @@
 package panel
 
 import (
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wangsirco/berth/internal/change"
@@ -24,19 +26,25 @@ const (
 // account has a second factor. An account without one still signs in with its password
 // (refusing would lock the only administrator out); the panel then insists on setting
 // one up (meView.Needs2FA).
-func (a *App) effectiveLoginMode(u *User) string {
-	if u.LoginMode == LoginPassword && a.exposed() && len(a.secondStepMethods(u)) > 0 {
+//
+// Passkeys belong to a name: only those of the name this request came in on count. A
+// Passkey made on mini.lan cannot confirm a sign-in on berth.example.com.
+func (a *App) effectiveLoginMode(r *http.Request, u *User) string {
+	if u.LoginMode == LoginPassword && a.exposed() && len(a.secondStepMethods(r, u)) > 0 {
 		return LoginPassword2FA
 	}
 	return u.LoginMode
 }
 
 func (a *App) passwordLoginStage(r *http.Request, u *User) (string, error) {
-	switch a.effectiveLoginMode(u) {
+	switch a.effectiveLoginMode(r, u) {
 	case LoginPasskeyOnly:
 		return "", errs.New(403, "auth.passkey_only")
 	case LoginPassword2FA:
-		if len(a.secondStepMethods(u)) == 0 {
+		if len(a.secondStepMethods(r, u)) == 0 {
+			if names := a.passkeyNames(u.ID); len(names) > 0 { // its Passkeys are on other names
+				return "", errs.New(403, "auth.no_factor_here", "names", strings.Join(names, ", "))
+			}
 			// misconfigured account (factor removed): refuse rather than silently skipping 2FA
 			return "", errs.New(403, "auth.no_second_factor")
 		}
@@ -48,15 +56,55 @@ func (a *App) passwordLoginStage(r *http.Request, u *User) (string, error) {
 	return "full", nil
 }
 
-func (a *App) secondStepMethods(u *User) []string {
+// secondStepMethods: what can confirm a sign-in on the name of this request
+func (a *App) secondStepMethods(r *http.Request, u *User) []string {
 	var m []string
 	if a.hasTOTP(u.ID) {
 		m = append(m, "totp", "recovery")
 	}
-	if a.usablePasskeyCount(u.ID) > 0 {
+	if a.passkeysOn(u.ID, requestName(r)) > 0 {
 		m = append(m, "passkey")
 	}
 	return m
+}
+
+// requestName: the host name of the request, lower case ("" for an address)
+func requestName(r *http.Request) string {
+	h := strings.ToLower(r.Host)
+	if x, _, err := net.SplitHostPort(h); err == nil {
+		h = x
+	}
+	h = strings.Trim(h, "[]")
+	if net.ParseIP(h) != nil {
+		return ""
+	}
+	return h
+}
+
+func (a *App) passkeysOn(uid int64, rp string) int {
+	if rp == "" {
+		return 0
+	}
+	var n int
+	a.db.QueryRow(`SELECT COUNT(*) FROM passkeys WHERE user_id=? AND rp_id=?`, uid, rp).Scan(&n)
+	return n
+}
+
+// passkeyNames: the names this account has Passkeys on
+func (a *App) passkeyNames(uid int64) []string {
+	var out []string
+	rows, err := a.db.Query(`SELECT DISTINCT rp_id FROM passkeys WHERE user_id=? ORDER BY rp_id`, uid)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if rows.Scan(&s) == nil {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (a *App) usablePasskeyCount(uid int64) int {

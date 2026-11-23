@@ -14,7 +14,9 @@ export interface User {
   created_at: number
   last_login_at: number
   simple?: boolean
-  needs_2fa?: boolean // public access is on and this account has no second factor yet
+  needs_2fa?: boolean // public access is on and this account has no second factor yet (on this name)
+  passkeys_elsewhere?: string[] // ...though it has Passkeys on these names
+  here?: string
 }
 
 export interface Actor { type: string; id: string; name: string; via: string; ip: string; ai_session?: string; intent?: string }

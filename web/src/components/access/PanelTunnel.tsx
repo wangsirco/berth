@@ -1,13 +1,15 @@
-import { Check, Cloud, ExternalLink, KeyRound, Mail, ShieldAlert } from 'lucide-react'
+import { Check, Cloud, ExternalLink, Fingerprint, KeyRound, Mail, ShieldAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { Notice } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Field'
+import { get } from '@/lib/api'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
 import { TokenDialog } from '@/pages/cloudflare/Welcome'
 import type { AccessCheck } from './PublicAccess'
+import type { Where } from './MainName'
 
 // PanelTunnel: the Cloudflare choice, done right here. No Cloudflare account yet: connect
 // one in place. One that can make tunnels: pick the name (panel.your-domain), whether the
@@ -22,6 +24,7 @@ export function PanelTunnel({ check, entry, onChanged }: { check: AccessCheck; e
   const t = useT()
   const run = useChange()
   const d = useApi<CF>('/api/v1/hosts/local/cloudflare')
+  const where = useApi<Where>('/api/v1/access/where')
   const [tok, setTok] = useState<null | 'new' | { id: string; name: string }>(null)
   const [acct, setAcct] = useState('')
   const [zone, setZone] = useState('')
@@ -29,7 +32,7 @@ export function PanelTunnel({ check, entry, onChanged }: { check: AccessCheck; e
   const [needEntry, setNeedEntry] = useState(true)
   const [access, setAccess] = useState(true)
   const [emails, setEmails] = useState('')
-  const done = () => { void d.reload(); onChanged?.() }
+  const done = () => { void d.reload(); void where.reload(); onChanged?.() }
 
   const accounts = d.data?.accounts ?? []
   const fixed = d.data?.tunnel?.integration // a tunnel there is: its account
@@ -53,6 +56,7 @@ export function PanelTunnel({ check, entry, onChanged }: { check: AccessCheck; e
           <li className={check.tunnel_entry ? '' : 'text-warn'}>{t(check.tunnel_entry ? 'ptun.live_entry' : 'ptun.live_no_entry')}</li>
           <li>{t('ptun.live_2fa')}</li>
         </ul>
+        {where.data && !(where.data.my_passkeys ?? []).includes(check.tunnel_host) && <AddPasskeyThere host={check.tunnel_host} others={where.data.my_passkeys ?? []} />}
         <Button size="sm" onClick={() => run('cf.tunnel.panel', { on: false }, { host: 'local', onDone: done })}>{t('ptun.stop')}</Button>
       </div>
     )
@@ -134,6 +138,29 @@ export function PanelTunnel({ check, entry, onChanged }: { check: AccessCheck; e
       </ul>
       <Button variant="primary" disabled={!ready} onClick={go}><ExternalLink className="size-3.5" />{t('ptun.go')}</Button>
       {dialog}
+    </div>
+  )
+}
+
+// AddPasskeyThere: Passkeys belong to a name — the ones on mini.lan do not sign in on the
+// public name. Go there signed in (a one-time link) and add one, before it is needed outside.
+export function AddPasskeyThere({ host, others }: { host: string; others: string[] }) {
+  const t = useT()
+  const [busy, setBusy] = useState(false)
+  const go = async () => {
+    setBusy(true)
+    const w = window.open('about:blank', '_blank')
+    try {
+      const h = await get<{ url: string }>('/api/v1/access/hop?to=public&path=' + encodeURIComponent('/account?passkey=add'))
+      if (w) w.location.href = h.url
+      else location.href = h.url
+    } catch { w?.close() } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-[var(--radius-box)] border border-warn/50 bg-[color-mix(in_srgb,var(--warn)_8%,var(--canvas))] px-3 py-2.5" data-add-passkey-there>
+      <p className="flex items-start gap-1.5 font-semibold text-[13px]"><Fingerprint className="mt-0.5 size-4 shrink-0 text-warn" />{t('ptun.pk_missing', { host })}</p>
+      <p className="mt-1 text-mute">{others.length ? t('ptun.pk_missing_d', { names: others.join('、'), host }) : t('ptun.pk_none_d', { host })}</p>
+      <Button size="sm" variant="primary" className="mt-2" disabled={busy} onClick={() => void go()}><Fingerprint className="size-3.5" />{t('ptun.pk_add', { host })}</Button>
     </div>
   )
 }
