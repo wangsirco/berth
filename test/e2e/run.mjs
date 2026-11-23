@@ -730,6 +730,38 @@ await spec('wharf-public-probe', async () => {
   await page.screenshot({ path: OUT + 'wharf-public-probe.png' })
 })
 
+await spec('panel-tunnel', async () => {
+  // Settings → 访问: the Cloudflare choice works in place (no account yet: connect one here)
+  await page.goto(`${BASE}/local/settings`)
+  await waitText('公网访问')
+  await click(text('Cloudflare 隧道'))
+  await waitText('先连接 Cloudflare', 15000)
+  await page.screenshot({ path: OUT + 'panel-tunnel-connect.png' })
+  await click(btn('连接 Cloudflare'))
+  await waitText('我已经创建好了')
+  await page.keyboard.press('Escape')
+  // turning the security entry off asks again, with what it means
+  const entryBox = '::-p-xpath(//input[@placeholder="留空表示不启用"])'
+  await page.click(entryBox, { clickCount: 3 })
+  await page.type(entryBox, '/e2e-door')
+  await click(btn('保存设置'))
+  await click('[data-testid=confirm]:not([disabled])', 15000)
+  await page.waitForFunction(() => document.body.innerText.includes('没有修改'), { timeout: 20000 })
+  await page.click(entryBox)
+  await page.$eval(entryBox, (e) => e.setSelectionRange(e.value.length, e.value.length))
+  for (let i = 0; i < 12; i++) await page.keyboard.press('Backspace')
+  await click(btn('保存设置'))
+  await waitText('不用安全入口？')
+  await page.screenshot({ path: OUT + 'no-entry-confirm.png' })
+  assert(await page.$eval('::-p-aria([name="确定不用安全入口"][role="button"])', (b) => b.disabled), 'confirm needs the tick')
+  await click(text('我了解风险'))
+  await click(btn('确定不用安全入口'))
+  await click('[data-testid=confirm]:not([disabled])', 15000)
+  await page.waitForFunction(() => document.body.innerText.includes('没有修改'), { timeout: 20000 })
+  const sv = (await api('/api/v1/settings')).body
+  assert(!sv.values['access.entry'], 'entry still set: ' + sv.values['access.entry'])
+})
+
 await spec('local-name', async () => {
   // the guide for Passkey's name: the host's own name.local (avahi already answers it, nothing is written)
   const hostName = sh('ssh', [HOST, 'hostname -s']).toLowerCase()

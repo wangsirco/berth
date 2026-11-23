@@ -20,7 +20,7 @@ type Env struct {
 	Certs map[int64]CertFiles
 	// Panel exposes the panel itself through the edge (optional): its names open it on
 	// 443, without a port.
-	Panel *PanelEntry
+	Panel     *PanelEntry
 	SitesRoot string // inside the container, default /srv/sites
 	LogsRoot  string // inside the container, default /var/log/caddy
 	// ProjectPorts: the port each native project currently serves on (0 or missing: not deployed)
@@ -39,6 +39,9 @@ type PanelEntry struct {
 	Upstream    string    // host:port of the panel as the edge reaches it
 	Cert        CertFiles // for LANHosts
 	Secret      string    // X-Berth-Edge: the panel trusts X-Forwarded-For only with it
+	// PublicDNS: the DNS account (key of Env.DNS) whose challenge issues the public names'
+	// certificate — behind a tunnel nothing reaches the machine for the HTTP challenge
+	PublicDNS string
 }
 
 type CertFiles struct {
@@ -161,9 +164,17 @@ func Render(sites []Site, env Env) ([]byte, error) {
 				// the hop links and Passkey's relying party by it
 				"Host":              []string{"{http.request.host}"},
 				"X-Berth-Edge":      []string{p.Secret},
+				"X-Berth-Peer":      []string{"{http.request.remote.host}"}, // who connected (cloudflared for the tunnel)
 				"X-Forwarded-Proto": []string{"https"},
 			}}}}
 		httpsRoutes = append([]any{obj{"match": []any{obj{"host": hosts}}, "handle": []any{up}, "terminal": true}}, httpsRoutes...)
+		if prov := env.DNS[p.PublicDNS]; p.PublicDNS != "" && prov != nil && len(p.PublicHosts) > 0 {
+			issuer := obj{"module": "acme", "challenges": obj{"dns": obj{"provider": prov}}}
+			if env.Email != "" {
+				issuer["email"] = env.Email
+			}
+			policies = append(policies, obj{"subjects": append([]string{}, p.PublicHosts...), "issuers": []any{issuer}})
+		}
 		if len(p.LANHosts) > 0 && p.Cert.Cert != "" {
 			loadFiles = append(loadFiles, obj{"certificate": p.Cert.Cert, "key": p.Cert.Key, "tags": []string{"berth-panel-" + p.Cert.Version}})
 			skip = append(skip, p.LANHosts...) // never ask ACME for local names

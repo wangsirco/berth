@@ -1876,5 +1876,13 @@
  "wharf.stats_no_dns": "Wharf 没有配置 NextDNS",
  "wharf.stats_no_scope": "配对时没有授予「统计（只读）」：在 Wharf 里重新授权后，这里就能看到流量和图表",
  "wharf.stats_unknown": "没有这项统计",
- "wharf.unreachable": "连不上 Wharf：{detail}"
+ "wharf.unreachable": "连不上 Wharf：{detail}",
+ "kind.cf.tunnel.panel": "通过 Cloudflare 隧道开放面板",
+ "action.cf.tunnel.panel": "通过隧道开放面板",
+ "plan.cf.tunnel.panel_on": "通过 Cloudflare 隧道用 {name} 打开面板（需要时先创建隧道；添加 DNS 记录和隧道路由；面板的公网名字改为 {name}）",
+ "plan.cf.tunnel.panel_off": "停止通过隧道开放面板：删除 {name} 的 DNS 记录、隧道路由和 Cloudflare Access",
+ "cf.panel_local_only": "只能在面板所在的这台机器上开放面板",
+ "cf.no_panel_tunnel": "面板没有通过隧道开放",
+ "cf.bad_panel_name": "名字不对：要像 panel.example.com 这样",
+ "cf.panel_name_used": "{name} 已经被一个网站用了，换个名字"
 }

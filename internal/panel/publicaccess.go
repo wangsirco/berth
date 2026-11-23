@@ -45,17 +45,20 @@ func localAddrs() []string {
 // accessCheck is what the wizard and Settings show before asking about public access.
 type accessCheck struct {
 	Public       bool   `json:"public"`
-	Entry        bool   `json:"entry"`               // a security entry is set
-	Port         string `json:"port"`                // the panel's port
-	PublicIP     string `json:"public_ip"`           // this server's address as the internet sees it ("" = none found)
-	PublicIPv6   string `json:"public_ipv6"`         // same for IPv6
-	OnInterface  bool   `json:"on_interface"`        // the public IPv4 sits on a NIC (no NAT in front)
-	LanIP        string `json:"lan_ip"`              // the address the default route leaves from
-	ClientIP     string `json:"client_ip"`           // the browser asking
-	ClientPublic bool   `json:"client_public"`       // ... arrived from the internet
-	Firewalld    bool   `json:"firewalld"`           // firewalld is running (it blocks unknown ports)
-	PortOpen     bool   `json:"port_open"`           // firewalld lets anyone reach the panel port
-	Tailscale    string `json:"tailscale,omitempty"` // this machine's Tailscale address, if it has one
+	Entry        bool   `json:"entry"`                   // a security entry is set
+	Port         string `json:"port"`                    // the panel's port
+	PublicIP     string `json:"public_ip"`               // this server's address as the internet sees it ("" = none found)
+	PublicIPv6   string `json:"public_ipv6"`             // same for IPv6
+	OnInterface  bool   `json:"on_interface"`            // the public IPv4 sits on a NIC (no NAT in front)
+	LanIP        string `json:"lan_ip"`                  // the address the default route leaves from
+	ClientIP     string `json:"client_ip"`               // the browser asking
+	ClientPublic bool   `json:"client_public"`           // ... arrived from the internet
+	Firewalld    bool   `json:"firewalld"`               // firewalld is running (it blocks unknown ports)
+	PortOpen     bool   `json:"port_open"`               // firewalld lets anyone reach the panel port
+	Tailscale    string `json:"tailscale,omitempty"`     // this machine's Tailscale address, if it has one
+	TunnelHost   string `json:"tunnel_host,omitempty"`   // the panel is published through the Cloudflare tunnel here
+	TunnelEntry  bool   `json:"tunnel_entry,omitempty"`  // ...and asks for the security entry there
+	TunnelAccess bool   `json:"tunnel_access,omitempty"` // ...behind Cloudflare Access
 }
 
 func (a *App) handleAccessCheck(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +66,9 @@ func (a *App) handleAccessCheck(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out := accessCheck{Public: a.isPublic(), Entry: a.setting("access.entry") != "", Port: a.panelPort(), ClientIP: a.clientIP(r)}
 	out.ClientPublic = !privateIP(net.ParseIP(out.ClientIP))
+	out.TunnelHost = a.setting("access.tunnel_host")
+	out.TunnelEntry = out.TunnelHost != "" && a.setting("access.tunnel_entry") != "off"
+	out.TunnelAccess = a.setting("access.tunnel_access") != ""
 	if ip, err := a.publicIP(ctx, "local", "A"); err == nil {
 		out.PublicIP = ip
 	}

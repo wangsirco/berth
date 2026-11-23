@@ -97,7 +97,7 @@ func (a *App) inviteByCode(code string) (*invite, error) {
 // panelLinkBase: where people outside should open the panel — the external address,
 // then the internal one, then whatever this browser used.
 func (a *App) panelLinkBase(r *http.Request) string {
-	if a.isPublic() {
+	if a.exposed() {
 		if u := a.panelURL("panel.public_host"); u != "" {
 			return u
 		}

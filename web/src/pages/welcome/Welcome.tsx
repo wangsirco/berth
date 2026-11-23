@@ -141,7 +141,7 @@ export default function Welcome() {
           {id === 'access' && (
             <>
               <Field label={t('welcome.public')}>
-                {check.data ? <PublicAccessPicker check={check.data} choice={how} onChoice={setReach} entry={s.entry} /> : <p className="text-[13px] text-mute">{t('pub.checking')}</p>}
+                {check.data ? <PublicAccessPicker check={check.data} choice={how} onChoice={setReach} entry={s.entry} onTunnel={() => void check.reload()} /> : <p className="text-[13px] text-mute">{t('pub.checking')}</p>}
               </Field>
               <Field label={t('welcome.entry')} hint={t('welcome.entry_hint')}>
                 <div className="flex gap-2"><Input className="num" aria-label={t("welcome.entry")} value={s.entry} onChange={(e) => setS({ ...s, entry: e.target.value })} /><Button onClick={() => setS({ ...s, entry: randomEntry() })}>{t('welcome.regenerate')}</Button></div>

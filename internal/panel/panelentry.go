@@ -129,6 +129,9 @@ func (a *App) panelEntry() *caddycfg.PanelEntry {
 		return nil
 	}
 	p := &caddycfg.PanelEntry{LANHosts: lan, PublicHosts: pub, Upstream: "host.docker.internal:" + a.panelPort(), Secret: a.edgeSecret()}
+	if th := a.setting("access.tunnel_host"); th != "" && contains(pub, th) {
+		p.PublicDNS = a.setting("access.tunnel_dns")
+	}
 	if len(lan) > 0 {
 		c, err := a.entryCertFor(lan)
 		if err != nil || c == nil {
@@ -170,7 +173,7 @@ func (a *App) entryKey() string {
 	if p == nil {
 		return "none"
 	}
-	return strings.Join(p.LANHosts, ",") + "|" + strings.Join(p.PublicHosts, ",") + "|" + p.Cert.Version + "|" + entryRev
+	return strings.Join(p.LANHosts, ",") + "|" + strings.Join(p.PublicHosts, ",") + "|" + p.Cert.Version + "|" + p.PublicDNS + "|" + entryRev
 }
 
 // entryRev: bumped when the edge's panel route itself changes, so upgrades load it again

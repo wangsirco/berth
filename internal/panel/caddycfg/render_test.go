@@ -430,6 +430,15 @@ func TestPanelEntry(t *testing.T) {
 	if h := routes[0].(map[string]any)["match"].([]any)[0].(map[string]any)["host"].([]any); h[0] != "mini.lan" {
 		t.Fatalf("panel route not first: %v", routes[0])
 	}
+	if !strings.Contains(s, `"X-Berth-Peer"`) {
+		t.Fatal("no peer header")
+	}
+	// behind a tunnel: the public name's certificate by the DNS challenge
+	b, _ = Render(nil, Env{DNS: map[string]map[string]any{"cf": {"name": "cloudflare", "api_token": "t"}}, Panel: &PanelEntry{PublicHosts: []string{"panel.example.com"}, PublicDNS: "cf",
+		Upstream: "host.docker.internal:7090", Secret: "s"}})
+	if s := string(b); !strings.Contains(s, `"challenges"`) || !strings.Contains(s, `"panel.example.com"`) {
+		t.Fatalf("no DNS challenge for the panel name:\n%s", s)
+	}
 }
 
 // An uploaded certificate is picked only for its own site's names; the other sites keep

@@ -69,7 +69,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	s := currentSession(r)
 	u := currentUser(r)
 	me := meView{User: u, Stage: "full", Onboarded: a.setting(onboardKey(u.ID)) != "", HasTOTP: a.hasTOTP(u.ID), Passkeys: a.usablePasskeyCount(u.ID)}
-	me.Needs2FA = a.isPublic() && len(a.secondStepMethods(u)) == 0
+	me.Needs2FA = a.exposed() && len(a.secondStepMethods(u)) == 0
 	if s != nil {
 		me.CSRF = s.csrf
 	}

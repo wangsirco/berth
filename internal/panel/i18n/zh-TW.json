@@ -1876,5 +1876,13 @@
  "wharf.stats_no_dns": "Wharf 沒有設定 NextDNS",
  "wharf.stats_no_scope": "配對時沒有授予「統計（唯讀）」：在 Wharf 裡重新授權後，這裡就能看到流量和圖表",
  "wharf.stats_unknown": "沒有這項統計",
- "wharf.unreachable": "連不上 Wharf：{detail}"
+ "wharf.unreachable": "連不上 Wharf：{detail}",
+ "kind.cf.tunnel.panel": "透過 Cloudflare 通道開放面板",
+ "action.cf.tunnel.panel": "透過通道開放面板",
+ "plan.cf.tunnel.panel_on": "透過 Cloudflare 通道以 {name} 開啟面板（需要時先建立通道；新增 DNS 記錄和通道路由；面板的公網名稱改為 {name}）",
+ "plan.cf.tunnel.panel_off": "停止透過通道開放面板：刪除 {name} 的 DNS 記錄、通道路由和 Cloudflare Access",
+ "cf.panel_local_only": "只能在面板所在的這台機器上開放面板",
+ "cf.no_panel_tunnel": "面板沒有透過通道開放",
+ "cf.bad_panel_name": "名稱不對：要像 panel.example.com 這樣",
+ "cf.panel_name_used": "{name} 已經被一個網站使用，換個名稱"
 }

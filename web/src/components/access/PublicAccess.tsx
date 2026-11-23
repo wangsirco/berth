@@ -3,9 +3,11 @@ import { useState } from 'react'
 import { Notice } from '@/components/ui/Box'
 import { Button } from '@/components/ui/Button'
 import { cx } from '@/components/ui/cx'
+import { Dialog } from '@/components/ui/Dialog'
 import { post, put } from '@/lib/api'
 import { useApi } from '@/lib/hooks'
 import { useT } from '@/lib/i18n'
+import { PanelTunnel } from './PanelTunnel'
 
 // How people reach the panel from outside. Most cloud servers are only reachable over
 // the internet, so the installer and the welcome wizard both ask; Settings can change
@@ -24,6 +26,9 @@ export interface AccessCheck {
   firewalld: boolean
   port_open: boolean
   tailscale?: string
+  tunnel_host?: string
+  tunnel_entry?: boolean
+  tunnel_access?: boolean
 }
 
 export type AccessChoice = 'public' | 'tailscale' | 'cloudflare' | 'lan'
@@ -42,8 +47,8 @@ export function suggestChoice(c: AccessCheck): AccessChoice {
 // applyPublicAccess turns public access on or off. On: the setting (with the entry in the
 // same change, since public access needs one) and, when firewalld blocks the panel port,
 // an allow rule confirmed at once: opening a port cannot lock anyone out.
-export async function applyPublicAccess(on: boolean, c: AccessCheck, extra: Record<string, string> = {}) {
-  await put('/api/v1/settings', { values: { ...extra, 'access.public': on ? '1' : '' } })
+export async function applyPublicAccess(on: boolean, c: AccessCheck, extra: Record<string, string> = {}, noEntry = false) {
+  await put('/api/v1/settings' + (noEntry ? '?no_entry=1' : ''), { values: { ...extra, 'access.public': on ? '1' : '' } })
   if (on && c.firewalld && !c.port_open) {
     await post('/api/v1/hosts/local/changes/firewall.rule.set', { action: 'allow', proto: 'tcp', ports: c.port, source: 'any', comment: 'Berth panel (public access)', enabled: true })
     await post('/api/v1/hosts/local/changes/firewall.confirm', {})
@@ -52,7 +57,7 @@ export async function applyPublicAccess(on: boolean, c: AccessCheck, extra: Reco
 
 const ICONS = { public: Globe, tailscale: Network, cloudflare: Cloud, lan: House } as const
 
-export function PublicAccessPicker({ check, choice, onChoice, entry }: { check: AccessCheck; choice: AccessChoice; onChoice: (c: AccessChoice) => void; entry: string }) {
+export function PublicAccessPicker({ check, choice, onChoice, entry, onTunnel }: { check: AccessCheck; choice: AccessChoice; onChoice: (c: AccessChoice) => void; entry: string; onTunnel?: () => void }) {
   const t = useT()
   const host = check.public_ip || location.hostname
   return (
@@ -102,7 +107,7 @@ export function PublicAccessPicker({ check, choice, onChoice, entry }: { check: 
           <p className="text-mute">{t('pub.ts_allowed')}</p>
         </div>
       )}
-      {choice === 'cloudflare' && <p className="text-[12.5px] text-mute">{t('pub.cf_steps')}</p>}
+      {choice === 'cloudflare' && <PanelTunnel check={check} entry={entry} onChanged={onTunnel} />}
       {choice === 'lan' && <p className="text-[12.5px] text-mute">{t('pub.lan_note', { ip: check.lan_ip || '—', port: check.port })}</p>}
     </div>
   )
@@ -115,16 +120,19 @@ export function PublicAccessSettings({ entry, onSaved }: { entry: string; onSave
   const [choice, setChoice] = useState<AccessChoice | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [ask, setAsk] = useState(false)
   if (!check.data) return <p className="text-[13px] text-mute">{check.error ? check.error.message : t('pub.checking')}</p>
   const c = check.data
-  const cur = choice ?? (c.public ? 'public' : suggestChoice(c) === 'public' ? 'lan' : suggestChoice(c))
+  const cur = choice ?? (c.public ? 'public' : c.tunnel_host ? 'cloudflare' : suggestChoice(c) === 'public' ? 'lan' : suggestChoice(c))
   const turnOn = cur === 'public' && !c.public
   const turnOff = cur !== 'public' && c.public
   const apply = async () => {
+    if (turnOn && !entry && !ask) { setAsk(true); return }
+    setAsk(false)
     setBusy(true)
     setErr('')
     try {
-      await applyPublicAccess(turnOn, c)
+      await applyPublicAccess(turnOn, c, {}, turnOn && !entry)
       await check.reload()
       setChoice(null)
       onSaved()
@@ -134,11 +142,30 @@ export function PublicAccessSettings({ entry, onSaved }: { entry: string; onSave
   }
   return (
     <div className="space-y-2">
-      <p className="text-[13px]">{t(c.public ? 'pub.state_on' : 'pub.state_off')}</p>
-      <PublicAccessPicker check={c} choice={cur} onChoice={setChoice} entry={entry} />
+      <p className="text-[13px]">{c.tunnel_host && !c.public ? t('pub.state_tunnel', { host: c.tunnel_host }) : t(c.public ? 'pub.state_on' : 'pub.state_off')}</p>
+      <PublicAccessPicker check={c} choice={cur} onChoice={setChoice} entry={entry} onTunnel={() => { void check.reload(); onSaved() }} />
       {err && <Notice tone="bad">{err}</Notice>}
-      {turnOn && !entry && <Notice tone="warn">{t('settings.public_needs_entry')}</Notice>}
-      {(turnOn || turnOff) && <Button variant={turnOn ? 'primary' : 'default'} disabled={busy || (turnOn && !entry)} onClick={() => void apply()}>{t(turnOn ? 'pub.turn_on' : 'pub.turn_off')}</Button>}
+      {turnOn && !entry && <Notice tone="warn">{t('pub.no_entry_warn')}</Notice>}
+      {(turnOn || turnOff) && <Button variant={turnOn ? 'primary' : 'default'} disabled={busy} onClick={() => void apply()}>{t(turnOn ? 'pub.turn_on' : 'pub.turn_off')}</Button>}
+      {ask && <NoEntryConfirm public onCancel={() => setAsk(false)} onConfirm={() => void apply()} />}
     </div>
+  )
+}
+
+// NoEntryConfirm: going without a security entry, asked a second time with what it means
+export function NoEntryConfirm({ public: pub, onCancel, onConfirm }: { public?: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const t = useT()
+  const [ok, setOk] = useState(false)
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()} title={t('noentry.title')}
+      footer={<><Button className="ml-auto" onClick={onCancel}>{t('common.cancel')}</Button><Button variant="danger" disabled={!ok} onClick={onConfirm}>{t('noentry.confirm')}</Button></>}>
+      <div className="space-y-2.5 px-4 py-3 text-[13px]">
+        <Notice tone="bad">{t(pub ? 'noentry.risk_public' : 'noentry.risk')}</Notice>
+        <ul className="list-disc space-y-1 pl-5 text-[12.5px] text-mute">
+          <li>{t('noentry.p1')}</li><li>{t('noentry.p2')}</li><li>{t('noentry.p3')}</li>
+        </ul>
+        <label className="flex items-center gap-2 text-[12.5px]"><input type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)} />{t('noentry.understand')}</label>
+      </div>
+    </Dialog>
   )
 }

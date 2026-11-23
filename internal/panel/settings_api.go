@@ -258,7 +258,7 @@ func (a *App) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		if !given {
 			entry = a.setting("access.entry")
 		}
-		if entry == "" {
+		if entry == "" && r.URL.Query().Get("no_entry") != "1" { // without one only when asked twice
 			a.fail(w, r, errs.New(400, "settings.public_needs_entry"))
 			return
 		}

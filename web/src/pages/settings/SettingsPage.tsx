@@ -2,7 +2,7 @@ import { Download } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useChange } from '@/components/change/ChangeDialog'
 import { ImportDialog } from '@/components/import/ImportDialog'
-import { PublicAccessSettings } from '@/components/access/PublicAccess'
+import { NoEntryConfirm, PublicAccessSettings } from '@/components/access/PublicAccess'
 import { PanelAddress } from '@/components/access/PanelAddress'
 import { AccessCard } from '@/components/access/AccessCard'
 import { Box } from '@/components/ui/Box'
@@ -41,11 +41,14 @@ function General() {
   const [v, setV] = useState<Record<string, string>>({})
   const [users, setUsers] = useState<string[]>([])
   const [importing, setImporting] = useState<'1panel' | 'npm' | 'caddyfile' | null>(null)
+  const [askNoEntry, setAskNoEntry] = useState(false)
   useEffect(() => { if (s.data) setV({ ...s.data.values, 'access.allow_cidrs': (s.data.values['access.allow_cidrs'] ?? '').split(/[,\n]/).join('\n') }) }, [s.data])
   useEffect(() => { get<{ items: { name: string }[] }>('/api/v1/hosts/local/system/users').then((r) => setUsers(r.items.map((u) => u.name))).catch(() => {}) }, [])
   if (!s.data) return null
   const orig: Record<string, string> = { ...s.data.values, 'access.allow_cidrs': (s.data.values['access.allow_cidrs'] ?? '').split(/[,\n]/).join('\n') }
   const changed = Object.fromEntries(Object.entries(v).filter(([k, x]) => (orig[k] ?? '') !== x))
+  const dropsEntry = (orig['access.entry'] ?? '') !== '' && changed['access.entry'] === ''
+  const save = () => run('settings.update', { values: changed }, { url: '/api/v1/settings' + (dropsEntry ? '?no_entry=1' : ''), onDone: () => void s.reload() })
   const set = (k: string) => (e: { target: { value: string } }) => setV({ ...v, [k]: e.target.value })
   const list = (k: string) => (v[k] ?? '').split(',').map((x) => x.trim()).filter(Boolean)
   const has = (k: string, x: string) => list(k).includes(x)
@@ -105,8 +108,9 @@ function General() {
       <div className="sticky bottom-9 flex items-center gap-2 rounded-[var(--radius-box)] border border-line bg-canvas px-4 py-2.5 shadow-sm">
         <span className="text-[12.5px] text-mute">{Object.keys(changed).length ? t('settings.changed', { n: Object.keys(changed).length }) : t('settings.no_change')}</span>
         <Button className="ml-auto" disabled={!Object.keys(changed).length} onClick={() => setV(orig)}>{t('compose.discard')}</Button>
-        <Button variant="primary" disabled={!Object.keys(changed).length} onClick={() => run('settings.update', { values: changed }, { url: '/api/v1/settings', onDone: () => void s.reload() })}>{t('action.settings.update')}</Button>
+        <Button variant="primary" disabled={!Object.keys(changed).length} onClick={() => (dropsEntry ? setAskNoEntry(true) : save())}>{t('action.settings.update')}</Button>
       </div>
+      {askNoEntry && <NoEntryConfirm public={s.data.public} onCancel={() => setAskNoEntry(false)} onConfirm={() => { setAskNoEntry(false); save() }} />}
     </div>
   )
 }

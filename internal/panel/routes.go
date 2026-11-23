@@ -94,7 +94,7 @@ func (a *App) entryGate(h http.Handler) http.Handler {
 		entry := a.setting("access.entry")
 		// before the first administrator exists the one-time setup code is the secret,
 		// so the setup link works even when the installer already set an entry
-		if entry == "" || a.userCount() == 0 {
+		if entry == "" || a.userCount() == 0 || (a.setting("access.tunnel_entry") == "off" && a.viaTunnel(r)) {
 			h.ServeHTTP(w, r)
 			return
 		}

@@ -2,6 +2,24 @@
 
 简体中文在前，English below each version.
 
+## 1.6.3 · 2026-11-24
+
+**Cloudflare 隧道：在设置页一步开放面板**
+- 「设置 → 访问 → 公网访问」选 **Cloudflare 隧道** 时，下面直接展开要做的事，不用再去别的页面：
+  - 还没有 Cloudflare 账号：说明怎么做，「连接 Cloudflare」就在这里，粘贴令牌即可；
+  - 令牌失效、看不到域名或缺少 Tunnel 权限：直接说缺什么，旁边就是「更换令牌」；
+  - 令牌可用：选一个名字（如 `panel.你的域名`），点「通过隧道开放面板」，面板会创建隧道（已有就共用）、添加 DNS 记录和隧道路由，并把面板的公网名字设成它。不开放任何端口，证书用 DNS 验证申请。
+- **打开前先验证邮箱（Cloudflare Access）**：默认勾选，只有你填的邮箱收到验证码后才能看到面板，别人连登录页都看不到。令牌没有 Access 权限时会说明并提示更换。
+- **隧道上的安全入口可以选**：默认仍然要带安全入口；也可以不勾，不勾又不验证邮箱时会明确提示风险。
+- 经隧道打开时，和公网直连一样每个账号都要二步验证；停止开放或撤销这次改动会删掉 DNS 记录、路由和 Access。
+- **安全入口可以关掉，但要确认两次**：清空安全入口保存时，先弹出说明风险的确认框，要勾选「我了解风险」才能继续。开启公网访问时没有安全入口，也不再直接挡住，而是同样提醒并确认。
+
+---
+
+- Settings → Access: choosing Cloudflare Tunnel now does it in place — connect a Cloudflare account there, see what a token lacks, or pick `panel.your-domain` and publish the panel through the tunnel in one change (tunnel, DNS record, route, public name; certificate by DNS validation; no port opened).
+- Cloudflare Access (an email code before the panel shows) is ticked by default; the security entry on the tunnel name is optional (on by default), with a warning when both are off. Two-step verification is required through the tunnel, as for public access.
+- The security entry can be turned off, after a confirmation that spells out the risk; public access without an entry asks the same way instead of refusing.
+
 ## 1.6.2 · 2026-11-23
 
 **和路由器绑定，从头到尾都说清楚**

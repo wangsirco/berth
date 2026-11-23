@@ -87,6 +87,46 @@ networks:
 `, tunnelImage, caddy.Network)
 }
 
+// createTunnel: a tunnel at Cloudflare for this host and cloudflared next to the edge
+func (a *App) createTunnel(env change.Env, integration string) (string, error) {
+	cf, err := a.cloudflare(integration)
+	if err != nil {
+		return "", err
+	}
+	acc, err := a.cfAccount(env.Ctx, cf)
+	if err != nil {
+		return "", err
+	}
+	env.Log("::step 0 create")
+	name := "berth-" + env.Host + "-" + strconv.FormatInt(time.Now().Unix()%100000, 36)
+	t, err := cf.CreateTunnel(env.Ctx, acc, name)
+	if err != nil {
+		return "", dnsErr(err)
+	}
+	tok, err := cf.TunnelToken(env.Ctx, acc, t.ID)
+	if err != nil {
+		cf.DeleteTunnel(env.Ctx, acc, t.ID)
+		return "", dnsErr(err)
+	}
+	cf.SetIngress(env.Ctx, acc, t.ID, nil)
+	enc, err := a.seal([]byte(tok))
+	if err != nil {
+		return "", err
+	}
+	a.db.Exec(`INSERT INTO cf_tunnels(host, integration, account, tunnel_id, name, token_enc, created_at) VALUES(?,?,?,?,?,?,?)`,
+		env.Host, integration, acc, t.ID, name, enc, time.Now().Unix())
+	env.Log("::step 1 run cloudflared")
+	envText := "TUNNEL_TOKEN=" + tok + "\n"
+	if err := a.call(env.Ctx, env.Host, "PUT", "/v1/compose/projects/"+tunnelProject+"/files", map[string]any{"compose": tunnelCompose(), "env": envText, "create": true}, nil); err != nil {
+		return "", err
+	}
+	if err := agentOp(env, "/v1/compose/projects/"+tunnelProject+"/up", nil); err != nil {
+		return "", err
+	}
+	a.relate(env.Host, change.Object{Type: "host", ID: env.Host}, projObj(tunnelProject, env.Host), "manages", "module")
+	return t.ID, nil
+}
+
 // tunnelRoutes lists the hostnames published through the host's tunnel.
 type tunnelRoute struct {
 	SiteID  int64    `json:"site_id"`
@@ -353,42 +393,11 @@ func init() {
 			a := svc(env)
 			var p struct{ Integration string }
 			json.Unmarshal(raw, &p)
-			cf, err := a.cloudflare(p.Integration)
+			id, err := a.createTunnel(env, p.Integration)
 			if err != nil {
 				return nil, nil, err
 			}
-			acc, err := a.cfAccount(env.Ctx, cf)
-			if err != nil {
-				return nil, nil, err
-			}
-			env.Log("::step 0 create")
-			name := "berth-" + env.Host + "-" + strconv.FormatInt(time.Now().Unix()%100000, 36)
-			t, err := cf.CreateTunnel(env.Ctx, acc, name)
-			if err != nil {
-				return nil, nil, dnsErr(err)
-			}
-			tok, err := cf.TunnelToken(env.Ctx, acc, t.ID)
-			if err != nil {
-				cf.DeleteTunnel(env.Ctx, acc, t.ID)
-				return nil, nil, dnsErr(err)
-			}
-			cf.SetIngress(env.Ctx, acc, t.ID, nil)
-			enc, err := a.seal([]byte(tok))
-			if err != nil {
-				return nil, nil, err
-			}
-			a.db.Exec(`INSERT INTO cf_tunnels(host, integration, account, tunnel_id, name, token_enc, created_at) VALUES(?,?,?,?,?,?,?)`,
-				env.Host, p.Integration, acc, t.ID, name, enc, time.Now().Unix())
-			env.Log("::step 1 run cloudflared")
-			envText := "TUNNEL_TOKEN=" + tok + "\n"
-			if err := a.call(env.Ctx, env.Host, "PUT", "/v1/compose/projects/"+tunnelProject+"/files", map[string]any{"compose": tunnelCompose(), "env": envText, "create": true}, nil); err != nil {
-				return nil, nil, err
-			}
-			if err := agentOp(env, "/v1/compose/projects/"+tunnelProject+"/up", nil); err != nil {
-				return nil, nil, err
-			}
-			a.relate(env.Host, change.Object{Type: "host", ID: env.Host}, projObj(tunnelProject, env.Host), "manages", "module")
-			return map[string]string{"tunnel": t.ID}, &change.UndoRecipe{Kind: "cf.tunnel.delete", Params: json.RawMessage(`{}`)}, nil
+			return map[string]string{"tunnel": id}, &change.UndoRecipe{Kind: "cf.tunnel.delete", Params: json.RawMessage(`{}`)}, nil
 		},
 	})
 	change.Register(change.Kind{
@@ -424,6 +433,9 @@ func init() {
 			}
 			a.db.Exec(`DELETE FROM cf_tunnel_routes WHERE host=?`, env.Host)
 			a.db.Exec(`DELETE FROM cf_tunnels WHERE host=?`, env.Host)
+			if env.Host == "local" {
+				a.clearPanelTunnel()
+			}
 			u, _ := json.Marshal(map[string]string{"integration": t.Integration})
 			return nil, &change.UndoRecipe{Kind: "cf.tunnel.create", Params: u}, nil
 		},

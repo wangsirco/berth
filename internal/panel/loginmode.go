@@ -25,7 +25,7 @@ const (
 // (refusing would lock the only administrator out); the panel then insists on setting
 // one up (meView.Needs2FA).
 func (a *App) effectiveLoginMode(u *User) string {
-	if u.LoginMode == LoginPassword && a.isPublic() && len(a.secondStepMethods(u)) > 0 {
+	if u.LoginMode == LoginPassword && a.exposed() && len(a.secondStepMethods(u)) > 0 {
 		return LoginPassword2FA
 	}
 	return u.LoginMode

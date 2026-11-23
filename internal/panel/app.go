@@ -162,7 +162,7 @@ func (a *App) clientIP(r *http.Request) string {
 }
 
 func (a *App) allowed(r *http.Request) bool {
-	if a.isPublic() {
+	if a.isPublic() || a.viaTunnel(r) {
 		return true
 	}
 	ip := net.ParseIP(a.clientIP(r))

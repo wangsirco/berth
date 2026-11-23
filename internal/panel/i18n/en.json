@@ -1876,5 +1876,13 @@
  "wharf.stats_no_dns": "Wharf has no NextDNS set up",
  "wharf.stats_no_scope": "The pairing did not grant Statistics (read-only): grant it again in Wharf to see traffic and charts here",
  "wharf.stats_unknown": "No such statistic",
- "wharf.unreachable": "Cannot reach Wharf: {detail}"
+ "wharf.unreachable": "Cannot reach Wharf: {detail}",
+ "kind.cf.tunnel.panel": "Publish the panel through Cloudflare Tunnel",
+ "action.cf.tunnel.panel": "Publish panel via tunnel",
+ "plan.cf.tunnel.panel_on": "Open the panel at {name} through Cloudflare Tunnel (creating the tunnel if needed; adds the DNS record and tunnel route; the panel's public name becomes {name})",
+ "plan.cf.tunnel.panel_off": "Stop publishing the panel: remove the DNS record, tunnel route and Cloudflare Access of {name}",
+ "cf.panel_local_only": "Only the machine the panel runs on can publish it",
+ "cf.no_panel_tunnel": "The panel is not published through the tunnel",
+ "cf.bad_panel_name": "Use a name like panel.example.com",
+ "cf.panel_name_used": "{name} is already used by a site; pick another name"
 }

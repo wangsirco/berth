@@ -43,7 +43,7 @@ export function ChangeProvider({ host: defaultHost = 'local', children }: { host
     if (cb) { waiting.current.delete(c.id); cb(c) }
   })
 
-  const url = (s: State, plan: boolean) => (s.opts.url ?? `/api/v1/hosts/${encodeURIComponent(s.opts.host ?? defaultHost)}/changes/${s.kind}`) + (plan ? '?plan=1' : '')
+  const url = (s: State, plan: boolean) => (s.opts.url ?? `/api/v1/hosts/${encodeURIComponent(s.opts.host ?? defaultHost)}/changes/${s.kind}`) + (plan ? (s.opts.url?.includes('?') ? '&plan=1' : '?plan=1') : '')
 
   // each dialog gets a number, so a request that finishes late only closes its own dialog
   const seq = useRef(0)
